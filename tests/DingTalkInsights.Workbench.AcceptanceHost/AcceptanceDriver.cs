@@ -78,12 +78,14 @@ internal static partial class AcceptanceDriver
             await ConfirmAction(window,page,"DTI 读取一次",false);
             Require(Resources(plugin).GetProperty("Dispatches").GetInt64()==0,"Cancelled read dispatched.");
             await ConfirmAction(window,page,"DTI 读取一次",true);
-            await Wait(()=>Observation(plugin).GetProperty("Candidates").GetInt32()==4,"Real demo Core read did not populate native candidates.");
+            await WaitActionRendered(plugin,"DTI 读取一次",()=>Observation(plugin).GetProperty("Candidates").GetInt32()==4
+                &&Find<TextBox>(page,"DTI 来源候选").Text.Contains("demo-2"),"Real demo Core read did not populate/render native candidates.");
             Require(Find<TextBox>(page,"DTI 来源候选").Text.Contains("demo-2"),"Native source evidence not rendered.");
             Find<TextBox>(page,"DTI 搜索词").Text="修复";await ConfirmAction(window,page,"DTI 搜索",true);
             await Wait(()=>Observation(plugin).GetProperty("Candidates").GetInt32()>0&&Resources(plugin).GetProperty("PendingOperations").GetInt32()==0,"Local native search did not finish.");
             await ConfirmAction(window,page,"DTI 整理候选",true);
-            await Wait(()=>Observation(plugin).GetProperty("ReportCharacters").GetInt32()>0,"Real demo model validation/rendering failed.");
+            await WaitActionRendered(plugin,"DTI 整理候选",()=>Observation(plugin).GetProperty("ReportCharacters").GetInt32()>0
+                &&Find<TextBox>(page,"DTI 待核实结果").Text.Contains("待核实")&&Find<ComboBox>(page,"DTI 历史结果").Items.Count>0,"Real demo model validation/rendering failed.");
             Require(Find<TextBox>(page,"DTI 待核实结果").Text.Contains("待核实"),"Tentative evidence result missing.");
             Require(Find<ComboBox>(page,"DTI 历史结果").Items.Count>0,"Real Core history not displayed.");
             Record("Real native read cancel/confirm, Core demo collection/local search/evidence-backed analysis/history; no network model/sender");
@@ -154,6 +156,12 @@ internal static partial class AcceptanceDriver
     static JsonElement Resources(object plugin)=>Observation(plugin).GetProperty("Resources");
     static Task Loop(object plugin)=>(Task)plugin.GetType().GetProperty("MonitoringCompletion")!.GetValue(plugin)!;
     static JsonElement PageState(object plugin)=>Observation(plugin).GetProperty("Page");
+    static Task WaitActionRendered(object plugin,string action,Func<bool> rendered,string failure)=>Wait(()=>
+    {
+        var state=PageState(plugin);
+        return state.GetProperty("Ready").GetBoolean()&&state.GetProperty("LastAction").GetString()==action
+            &&state.GetProperty("Outcome").GetString()=="completed"&&!state.GetProperty("Busy").GetBoolean()&&rendered();
+    },failure);
     static Task WaitPageReady(PluginManager manager)=>Wait(()=>PageState(PluginTarget(manager)).GetProperty("Ready").GetBoolean(),
         "Plugin page did not complete its own Loaded subscription and initial snapshot render.");
     static async Task<FrameworkElement> Workspace(MainWindow window)

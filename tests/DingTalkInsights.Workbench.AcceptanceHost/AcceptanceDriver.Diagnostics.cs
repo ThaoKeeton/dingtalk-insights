@@ -6,6 +6,8 @@ internal static partial class AcceptanceDriver
 {
     static string CurrentStep{get;set;}="bootstrap";
     static List<string> completedChecks=[];
+    static int failureRecorded;
+    static bool AcceptanceFailed=>Volatile.Read(ref failureRecorded)!=0;
     // Only driver-owned assertions may contribute text to the failure log; provider/native exception bodies never do.
     sealed class OwnedAssertionException(string safeAssertion):Exception(safeAssertion)
     {public string SafeAssertion{get;}=safeAssertion;}
@@ -28,6 +30,9 @@ internal static partial class AcceptanceDriver
     }
     internal static void WriteFailure(RunOptions options,string stage,Exception error,MainWindow? window)
     {
+        Environment.ExitCode=1;
+        // Original attribution survives later teardown callbacks and bootstrap fallback cleanup.
+        if(Interlocked.CompareExchange(ref failureRecorded,1,0)!=0)return;
         JsonElement? diagnostics=null;
         try
         {
