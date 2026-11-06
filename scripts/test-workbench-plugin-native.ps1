@@ -47,6 +47,7 @@ function New-NativeFailureSummary($Result, [bool]$ParseFailed, [string]$StderrTe
     $checks = @($Result.checks)
     $startup = @($Result.startupStages)
     $factory = $Result.pluginDiagnostics.ViewFailure
+    $page = $Result.pluginDiagnostics.Page
     return [ordered]@{
         stage = (Safe-NativeLabel $stage)
         errorType = (Safe-NativeLabel $errorType 160)
@@ -61,6 +62,18 @@ function New-NativeFailureSummary($Result, [bool]$ParseFailed, [string]$StderrTe
         frames = @(Safe-NativeFrames $Result.frames)
         factoryFrames = @(Safe-NativeFrames $factory.Frames)
         stderrHResults = @([regex]::Matches($StderrText, '(?i)\bHRESULT\s*[:=]?\s*(0x[0-9a-f]{8})\b') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique -First 3)
+        pageReady = $page.Ready
+        pageOutcome = (Safe-NativeLabel $page.Outcome 40)
+        pageLastAction = (Safe-NativeLabel $page.LastAction 80)
+        pageSaveStage = (Safe-NativeLabel $page.SaveStage 40)
+        pageFailureCategory = (Safe-NativeLabel $page.FailureCategory 80)
+        pageStatusOrigin = (Safe-NativeLabel $page.StatusOrigin 20)
+        actionStartedOnUi = $page.ActionStartedOnUi
+        saveResumedOnUi = $page.SaveResumedOnUi
+        settingsDraftExists = $Result.settingsFixture.DraftExists
+        settingsDraftBytes = $Result.settingsFixture.DraftBytes
+        settingsPreferencesMatch = $Result.settingsFixture.PreferencesMatch
+        settingsObservationErrorType = (Safe-NativeLabel $Result.settingsFixture.ErrorType 80)
         stderrCharacters = $StderrText.Length
     }
 }

@@ -32,8 +32,11 @@ internal sealed class InsightPage:UserControl
     readonly CheckBox useModel=Named(new CheckBox{Content="仅模型用途"},"DTI 凭据用于模型"),useWebhook=Named(new CheckBox{Content="仅人工 Webhook 用途"},"DTI 凭据用于 Webhook");
     Button? begin;
     SnapshotBinding? binding;
-    bool loaded,rendering;
+    bool loaded,rendering,rendered;
+    string lastAction="none",actionOutcome="none",saveStage="none",failureCategory="none";
+    bool? actionStartedOnUi,saveResumedOnUi;
     readonly NativeActionGate actions;
+    readonly PageNotice pageNotice=new();
     long attachment;
 
     public InsightPage(PluginSession session,bool settings,NativeActionGate? actions=null)
@@ -53,7 +56,7 @@ internal sealed class InsightPage:UserControl
             if(loaded)return;loaded=true;attachment++;
             binding=new(controller,action=>DispatcherQueue.TryEnqueue(()=>action()),Render);
         };
-        Unloaded+=(_,_)=>{loaded=false;attachment++;binding?.Dispose();binding=null;key.Password="";webhook.Password="";secret.Password="";};
+        Unloaded+=(_,_)=>{loaded=false;rendered=false;attachment++;binding?.Dispose();binding=null;key.Password="";webhook.Password="";secret.Password="";};
     }
     void BuildWorkspace()
     {
@@ -71,7 +74,7 @@ internal sealed class InsightPage:UserControl
     void BuildSettings()
     {
         body.Children.Add(Text("配置载入不会恢复采集、模型或发送权限。身份、会话、时间与任务草稿只存入本机加密文件；宿主 JSON 只存非敏感限额与模型偏好。"));
-        Add(Action("载入已保存配置","DTI 载入设置",async()=>{await session.LoadAsync();Populate();notice.Text="已载入配置；尚未连接或开始。";}),Action("保存本机配置","DTI 保存设置",async()=>{CaptureSettings();await session.SaveAsync();notice.Text="配置已保存；未授予业务或凭据权限。";}));
+        Add(Action("载入已保存配置","DTI 载入设置",async()=>{await session.LoadAsync();Populate();ShowNotice("已载入配置；尚未连接或开始。");}),Action("保存本机配置","DTI 保存设置",SaveSettings));
         Add(profile,conversation,start,end,executable,poll,retention,model,inputRate,outputRate,output,budget,requests,destination);
         Add(Action("预览并发现会话…","DTI 发现会话操作",Discover),conversations);
         conversations.SelectionChanged+=(_,_)=>{if(!rendering&&conversations.SelectedItem is ConversationRow row)conversation.Text=row.Value.ConversationId;};
@@ -85,6 +88,16 @@ internal sealed class InsightPage:UserControl
         {if(await Confirm("清理索引","仅清理当前连接的本机消息、结果与断点；当日预算、请求和发送尝试保留。不会修改钉钉原始聊天。"))await Work(()=>controller.ClearIndexAsync(true));}));
         body.Children.Add(Text("帮助与限制",20));
         body.Children.Add(Text("监控为官方 DWS 会话消息轮询，不是桌面捕获。只读模式不调用模型；未知/不完整来源不会推进完整断点。模型失败、预算延后、权限和迁移失败均显示安全类别。关闭/睡眠/注销期间不保证实时采集。API1 没有停止原因、后台恢复、密钥服务或卸载事务：停用/退出均彻底退役，重新启用须重新确认。程序集保持加载至进程退出；请退出宿主后才移除包。人工 Webhook 结果不确定时不自动重发，重发可能重复。费用单价是用户输入的本地估算，不是实时报价。"));
+    }
+    // Safe metadata only: never return entered values, content, credentials or notice text.
+    public object ActionObservation=>new{Ready=loaded&&rendered&&binding is not null,Loaded=loaded,Rendered=rendered,Attachment=attachment,
+        Busy=actions.IsBusy,LastAction=lastAction,Outcome=actionOutcome,SaveStage=saveStage,FailureCategory=failureCategory,
+        ActionStartedOnUi=actionStartedOnUi,SaveResumedOnUi=saveResumedOnUi,StatusOrigin=pageNotice.Origin};
+    async Task SaveSettings()
+    {
+        saveStage="capture";CaptureSettings();saveStage="persist";await session.SaveAsync();
+        saveResumedOnUi=DispatcherQueue.HasThreadAccess;saveStage="completed";
+        ShowNotice("配置已保存；未授予业务或凭据权限。");
     }
     void Populate()
     {
@@ -116,7 +129,7 @@ internal sealed class InsightPage:UserControl
         try
         {
             if(task.Text!=snapshot.Draft)task.Text=snapshot.Draft;
-            notice.Text=snapshot.Notice;
+            notice.Text=pageNotice.ApplyRuntime(snapshot.Notice);
             health.Text=$"来源：{snapshot.Connection} · {(snapshot.IsMonitoring?"监控运行中":"已停止")} · {snapshot.Health.Status}\n{MonitorNotices.For(snapshot.Health.Failure)}\n下次检查：{snapshot.Health.NextReadAt:O} · 模型延后：{snapshot.Health.ModelDeferredUntil:O}\nUTC 日：{snapshot.BudgetDay} · 预留 ${F(snapshot.ReservedUsd)} · 请求 {snapshot.Requests} · 保留 {snapshot.RetentionDays} 天";
             candidates.Text=string.Join("\n\n",snapshot.Candidates.Select(m=>$"[{m.MessageId}] {m.CreatedAt:O} · {m.Sender}\n{m.Text}"));
             report.Text=snapshot.Markdown;
@@ -125,6 +138,7 @@ internal sealed class InsightPage:UserControl
             history.ItemsSource=snapshot.History.Reverse().Select(h=>new HistoryRow(h)).ToArray();
             if(selected is not null)history.SelectedItem=((IEnumerable<HistoryRow>)history.ItemsSource).FirstOrDefault(h=>h.Value==selected);
             if(begin is not null)begin.IsEnabled=!snapshot.IsMonitoring&&!snapshot.IsBusy;
+            rendered=true;
         }
         finally{rendering=false;}
     }
@@ -172,7 +186,7 @@ internal sealed class InsightPage:UserControl
     Task Copy()
     {
         var content=controller.Snapshot.Markdown;if(content.Length==0)throw new RuntimeFault(RuntimeFailure.Retention);
-        var data=new DataPackage();data.SetText(content);Clipboard.SetContent(data);notice.Text="已复制当前有效结果；请在分享前复核证据与范围。";return Task.CompletedTask;
+        var data=new DataPackage();data.SetText(content);Clipboard.SetContent(data);ShowNotice("已复制当前有效结果；请在分享前复核证据与范围。");return Task.CompletedTask;
     }
     async Task Send()
     {
@@ -215,21 +229,34 @@ internal sealed class InsightPage:UserControl
         var dialog=new ContentDialog{XamlRoot=XamlRoot,Title=title,Content=text,PrimaryButtonText=primary,CloseButtonText="取消",DefaultButton=ContentDialogButton.Close};
         var result=await dialog.ShowAsync();return loaded&&attachment==epoch&&controller.Snapshot.Active&&result==ContentDialogResult.Primary;
     }
-    async Task Safe(Func<Task> action,bool stop=false)
+    async Task Safe(Func<Task> action,bool stop=false,string actionId="selection")
     {
-        if(!loaded||!controller.Snapshot.Active)return;
+        lastAction=actionId;
+        if(!loaded||!controller.Snapshot.Active){actionOutcome=loaded?"inactive":"not-loaded";return;}
         var epoch=attachment;
-        await actions.RunAsync(async()=>
+        var accepted=await actions.RunAsync(async()=>
         {
-            try{await action();}
-            catch(SafetyException error){if(loaded&&attachment==epoch)notice.Text=error.Message;}
-            catch(Exception){if(loaded&&attachment==epoch)notice.Text="本机操作未完成；未显示传输正文或凭据，请核对配置或存储。";}
+            actionOutcome="running";failureCategory="none";actionStartedOnUi=DispatcherQueue.HasThreadAccess;
+            notice.Text=pageNotice.BeginAction(controller.Snapshot.Notice);
+            try{await action();actionOutcome="completed";}
+            catch(SafetyException error)
+            {
+                actionOutcome="failed";failureCategory=error is RuntimeFault fault?fault.Category.ToString():error is MonitoringFault monitor?monitor.Category.ToString():"Validation";
+                if(loaded&&attachment==epoch)ShowNotice(error.Message);
+            }
+            catch(Exception error)
+            {
+                actionOutcome="failed";failureCategory=error.GetType().Name;
+                if(loaded&&attachment==epoch)ShowNotice("本机操作未完成；未显示传输正文或凭据，请核对配置或存储。");
+            }
         },stop);
+        if(!accepted)actionOutcome="busy";
     }
+    void ShowNotice(string message)=>notice.Text=pageNotice.ShowLocal(message,controller.Snapshot.Notice);
     static Task<T> Work<T>(Func<Task<T>> action)=>PluginSession.Worker(action);
     static Task Work(Func<Task> action)=>PluginSession.Worker(action);
     Button Action(string label,string name,Func<Task> action,bool stop=false)
-    {var button=Named(new Button{Content=label,HorizontalAlignment=HorizontalAlignment.Left},name);button.Click+=async(_,_)=>await Safe(action,stop);return button;}
+    {var button=Named(new Button{Content=label,HorizontalAlignment=HorizontalAlignment.Left},name);button.Click+=async(_,_)=>await Safe(action,stop,name);return button;}
     Button Action(string label,string name,Func<Task> action,out Button? button)=>button=Action(label,name,action);
     void Add(params UIElement[] elements){foreach(var element in elements)body.Children.Add(element);}
     static T Named<T>(T value,string name)where T:DependencyObject{AutomationProperties.SetName(value,name);return value;}

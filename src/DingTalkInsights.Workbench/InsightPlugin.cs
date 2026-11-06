@@ -10,6 +10,7 @@ public sealed class InsightPlugin:IWorkbenchPlugin
 {
     PluginSession? session;
     object? viewFailure;
+    WeakReference<InsightPage>? currentPage;
     public InsightPlugin() { }
     public Task InitializeAsync(IPluginContext context,CancellationToken cancellationToken)
     {
@@ -28,7 +29,7 @@ public sealed class InsightPlugin:IWorkbenchPlugin
     FrameworkElement CreateSettings()=>CreatePage(true);
     FrameworkElement CreatePage(bool settings)
     {
-        try{return new InsightPage(session??throw new InvalidOperationException("Inactive plugin."),settings);}
+        try{var page=new InsightPage(session??throw new InvalidOperationException("Inactive plugin."),settings);currentPage=new(page);return page;}
         catch(Exception error)
         {
             // The presenter catches factory exceptions. Keep only safe category/HRESULT diagnostics, never content or keys.
@@ -51,6 +52,7 @@ public sealed class InsightPlugin:IWorkbenchPlugin
     public string ObservationJson=>JsonSerializer.Serialize(new
     {
         ViewFailure=viewFailure,
+        Page=currentPage is not null&&currentPage.TryGetTarget(out var page)?page.ActionObservation:null,
         Resources=session?.Controller.Observation,
         AdapterPendingPersistence=session?.PendingPersistence??0,
         Active=session?.Controller.Snapshot.Active??false,

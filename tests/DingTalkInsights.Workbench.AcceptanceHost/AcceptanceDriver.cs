@@ -65,7 +65,11 @@ internal static partial class AcceptanceDriver
             Find<TextBox>(settings,"DTI 轮询秒数").Text="60";Find<TextBox>(settings,"DTI 保留天数").Text="7";
             Find<TextBox>(settings,"DTI 整理事项").Text=Draft;
             Invoke(Find<Button>(settings,"DTI 保存设置"));
-            await Wait(()=>Find<TextBlock>(settings,"DTI 操作结果").Text.Contains("配置已保存"),"Native save did not complete.");
+            await Wait(()=>Find<TextBlock>(settings,"DTI 操作结果").Text.Contains("配置已保存")&&PageState(plugin).GetProperty("Outcome").GetString()=="completed"&&PageState(plugin).GetProperty("SaveStage").GetString()=="completed","Native save did not complete.");
+            var saved=ObserveSavedFixture(options.UserRoot);
+            Require(saved.DraftExists&&saved.DraftBytes>0&&saved.PreferencesMatch,"Native Save did not persist the captured fixture preferences/encrypted draft.");
+            Require(PageState(plugin).GetProperty("ActionStartedOnUi").GetBoolean()&&PageState(plugin).GetProperty("SaveResumedOnUi").GetBoolean(),"Native Save capture/completion left the UI dispatcher.");
+            observations.Add(new{stage="native-settings-save-completed",page=PageState(plugin),persistence=saved});
             Require(File.Exists(Path.Combine(data,"connection-draft.dpapi")),"Native configuration not encrypted.");
             var json=Directory.EnumerateFiles(Path.Combine(options.UserRoot,"settings"),"*.json",SearchOption.AllDirectories).Select(File.ReadAllText);
             Require(json.All(t=>!t.Contains(Draft)&&!t.Contains("OpenAiKey")&&!t.Contains("WebhookUrl")),"Sensitive data entered host settings JSON.");
@@ -170,17 +174,20 @@ internal static partial class AcceptanceDriver
     static JsonElement Observation(object plugin)=>JsonDocument.Parse((string)plugin.GetType().GetProperty("ObservationJson")!.GetValue(plugin)!).RootElement.Clone();
     static JsonElement Resources(object plugin)=>Observation(plugin).GetProperty("Resources");
     static Task Loop(object plugin)=>(Task)plugin.GetType().GetProperty("MonitoringCompletion")!.GetValue(plugin)!;
+    static JsonElement PageState(object plugin)=>Observation(plugin).GetProperty("Page");
+    static Task WaitPageReady(PluginManager manager)=>Wait(()=>PageState(PluginTarget(manager)).GetProperty("Ready").GetBoolean(),
+        "Plugin page did not complete its own Loaded subscription and initial snapshot render.");
     static async Task<FrameworkElement> Workspace(MainWindow window)
     {
         CurrentStep="workspace-native-controls";
         var page=await window.SmokeNavigateAsync("view",Id,"workspace");Require(AutomationProperties.GetName(page)=="DTI 原生工作区","Native workspace factory returned error/unexpected page.");
-        Find<TextBox>(page,"DTI 整理事项");Find<Button>(page,"DTI 开始监控");return page;
+        Find<TextBox>(page,"DTI 整理事项");Find<Button>(page,"DTI 开始监控");await WaitPageReady(window.SmokeManager);return page;
     }
     static async Task<FrameworkElement> Settings(MainWindow window)
     {
         CurrentStep="settings-native-controls";
         var page=await window.SmokeNavigateAsync("view",Id,"settings");Require(AutomationProperties.GetName(page)=="DTI 原生设置","Native settings factory returned error/unexpected page.");
-        Find<TextBox>(page,"DTI 身份 corpId:userId");Find<Button>(page,"DTI 保存设置");return page;
+        Find<TextBox>(page,"DTI 身份 corpId:userId");Find<Button>(page,"DTI 保存设置");await WaitPageReady(window.SmokeManager);return page;
     }
     static async Task Start(MainWindow window,FrameworkElement page,object plugin)
     {

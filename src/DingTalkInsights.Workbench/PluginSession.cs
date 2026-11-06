@@ -111,3 +111,18 @@ public sealed class SnapshotBinding:IDisposable
     }
     public void Dispose(){Interlocked.Exchange(ref disposed,1);Interlocked.Increment(ref revision);subscription.Dispose();}
 }
+
+/// <summary>Arbitrates local action feedback and dispatcher-delivered runtime notices.</summary>
+public sealed class PageNotice
+{
+    string baseline="";
+    public string Text{get;private set;}="";
+    public string Origin{get;private set;}="runtime";
+    public string BeginAction(string runtimeNotice){baseline=runtimeNotice;Text=runtimeNotice;Origin="runtime";return Text;}
+    public string ShowLocal(string text,string runtimeNotice){baseline=runtimeNotice;Text=text;Origin="local";return Text;}
+    public string ApplyRuntime(string runtimeNotice)
+    {
+        if(Origin=="local"&&runtimeNotice==baseline)return Text;
+        baseline=runtimeNotice;Text=runtimeNotice;Origin="runtime";return Text;
+    }
+}
