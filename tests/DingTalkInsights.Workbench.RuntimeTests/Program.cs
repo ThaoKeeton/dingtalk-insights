@@ -89,6 +89,16 @@ internal static class BridgeTests
             Require(original.IsCompleted&&f.Tasks.Work.IsCompleted&&!f.Controller.Snapshot.IsMonitoring,"execution token failed to stop actual monitor");
             Require(f.Source.Calls==count&&f.Controller.Observation.StoreOwned,"task stop lost connection or dispatched later");
         });
+        yield return ("explicit plugin Stop keeps the delegate owned until host cancellation is admitted",async()=>
+        {
+            await using var f=new BridgeFixture();await f.Connect();Require(await f.Bridge.StartAsync(f.Preview(),true),"start failed");await f.Clock.Wait();
+            var entered=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);var release=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            f.Tasks.BeforeStop=async()=>{entered.TrySetResult();await release.Task;};
+            var stop=f.Bridge.StopAsync();await Gate(entered.Task);await Gate(f.Controller.MonitoringCompletion);
+            try{Require(await Task.WhenAny(f.Tasks.Work,Task.Delay(250))!=f.Tasks.Work,"delegate completed before delayed host Stop could admit cancellation; registry would stay Completed");}
+            finally{release.TrySetResult();await stop;}
+            Require(f.Tasks.State==PluginBackgroundTaskState.Stopped&&!f.Tasks.Desired,"explicit Stop did not settle registered state");
+        });
         yield return ("manual read Stop with no registered job invalidates immediately and joins IO",async()=>
         {
             await using var f=new BridgeFixture();await f.Connect();var release=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -136,7 +146,8 @@ internal static class BridgeTests
         yield return ("natural loop exit retires registration without automatic restart",async()=>
         {
             await using var f=new BridgeFixture();await f.Connect();f.Source.Read=(_,_)=>throw new MonitoringFault(MonitorFailure.Configuration);
-            Require(await f.Bridge.StartAsync(f.Preview(),true),"start failed");await Gate(f.Tasks.Work);
+            Require(await f.Bridge.StartAsync(f.Preview(),true),"start failed");
+            try{await Gate(f.Tasks.Work);throw new Exception("business failure did not reach host delegate");}catch(RuntimeFault){}
             Require(f.Bridge.CapturedLoop.IsCompleted&&f.Tasks.Starts==1&&f.Source.Reads==1,"natural exit restarted or left delegate alive");
         });
     }
@@ -186,6 +197,7 @@ internal sealed class ControlledTasks:IPluginBackgroundTasks
     public PluginBackgroundTask? Definition;public bool QueueOnly,RejectScheduled,Desired;public int Starts;public Task Work=Task.CompletedTask;
     readonly TaskCompletionSource scheduled=new(TaskCreationOptions.RunContinuationsAsynchronously);public TaskCompletionSource Scheduled=>scheduled;
     TaskCompletionSource? queued;Execution? execution;public PluginBackgroundTaskState State=PluginBackgroundTaskState.Stopped;
+    public Func<Task>? BeforeStop;
     public void Register(PluginBackgroundTask task){if(Definition is not null)throw new Exception("duplicate definition");Definition=task;}
     public IReadOnlyList<PluginBackgroundTaskSnapshot> GetSnapshots()=>Definition is null?[]:[new(Definition.Id,Definition.Title,State,false,Desired,null,null,null){RequiresPluginStart=Definition.RequiresPluginStart}];
     public Task<PluginTaskOperationResult> StartAsync(string id,CancellationToken token=default)
@@ -196,7 +208,7 @@ internal sealed class ControlledTasks:IPluginBackgroundTasks
     }
     public void RunQueued()=>queued?.TrySetResult();
     public async Task<PluginTaskOperationResult> StopAsync(string id,CancellationToken token=default)
-    {Desired=false;if(execution is not null)await CancelExecution(PluginStopReason.UserRequest);return new(true,"stopped");}
+    {if(BeforeStop is not null)await BeforeStop();Desired=false;if(execution is not null)await CancelExecution(PluginStopReason.UserRequest);return new(true,"stopped");}
     public async Task CancelExecution(PluginStopReason reason)
     {
         if(execution is null)return;State=PluginBackgroundTaskState.Stopping;execution.Reason=reason;execution.Cancellation.Cancel();RunQueued();await Work;State=PluginBackgroundTaskState.Stopped;

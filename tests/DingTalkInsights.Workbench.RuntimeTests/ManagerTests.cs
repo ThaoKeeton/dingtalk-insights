@@ -13,6 +13,18 @@ internal static class ManagerTests
     static async Task Wait(Func<bool> condition){using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(5));while(!condition())await Task.Delay(10,deadline.Token);}
     public static IEnumerable<(string,Func<Task>)> All(string fixture)
     {
+        yield return ("actual Manager maps a natural business monitor failure to safe Faulted state",async()=>
+        {
+            using var f=new ManagedRoot(fixture);await using var manager=f.Manager();await manager.InstallAsync(f.Package);await manager.DiscoverAsync();await manager.EnableAsync(Id,confirmTrust:true);
+            var view=manager.Contributions.Views.Single().View;var session=Get<PluginSession>(view,"Session");var bridge=Get<WorkbenchMonitorTask>(view,"Bridge");var source=Get<object>(view,"Source");
+            Set(source,"FailRead",true);var root=Path.Combine(f.Root,"canonical");var cipher=Get<IDataCipher>(view,"Cipher");using(var seed=new BusinessStore(root,cipher))seed.Save(seed.Load());
+            await session.Controller.ConnectAsync(root,true);var request=new MonitoringRequest("dws","fixture:user","fixture-room",DateTimeOffset.UtcNow.AddMinutes(-10),Path.Combine(f.Root,"synthetic-dws"),false,new(),60,30);
+            Require(await bridge.StartAsync(session.Controller.PreviewMonitoring(request),true),"start did not acknowledge actual controller");
+            await Wait(()=>manager.GetBackgroundTaskSnapshots(Id).Single().State is PluginBackgroundTaskState.Completed or PluginBackgroundTaskState.Faulted);
+            var snapshot=manager.GetBackgroundTaskSnapshots(Id).Single();
+            Require(snapshot.State==PluginBackgroundTaskState.Faulted&&snapshot.ErrorCode=="BackgroundTaskFailed","business failure was reported as successful completion");
+            Require(Get<int>(source,"Reads")==1&&!session.Controller.Snapshot.IsMonitoring,"failed monitor retried or stayed live");
+        });
         yield return ("actual Manager owns explicit host credentials and never restores a purpose grant",async()=>
         {
             using var f=new ManagedRoot(fixture);await using var manager=f.Manager();await manager.InstallAsync(f.Package);await manager.DiscoverAsync();await manager.EnableAsync(Id,confirmTrust:true);

@@ -52,6 +52,7 @@ public sealed class ControlledSource:IRuntimeServices
 {
     int held,inspections,reads;
     public bool? HoldReadiness{get;set;}
+    public bool FailRead{get;set;}
     public int Inspections=>Volatile.Read(ref inspections);public int Reads=>Volatile.Read(ref reads);
     public TaskCompletionSource Entered{get;}=new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource Cancelled{get;}=new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -66,6 +67,7 @@ public sealed class ControlledSource:IRuntimeServices
     public async Task<MessageBatch> ReadAsync(string executable,QueryScope scope,CancellationToken cancellation)
     {
         Interlocked.Increment(ref reads);if(HoldReadiness==false&&Interlocked.CompareExchange(ref held,1,0)==0)await Hold(cancellation);
+        if(FailRead)throw new MonitoringFault(MonitorFailure.Configuration);
         return new(scope,[new("fixture-1",scope.ConversationId,"fixture-user","Synthetic sender","Synthetic pending-stop evidence",scope.Start+(scope.End-scope.Start)/2)],true,[],new Dictionary<string,JsonElement>());
     }
     public Task<MessageBatch> SearchAsync(string executable,QueryScope scope,string keywords,CancellationToken cancellation)=>throw new InvalidOperationException("Unexpected fixture search.");

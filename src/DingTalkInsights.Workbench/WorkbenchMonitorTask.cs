@@ -1,4 +1,5 @@
 using DingTalkInsights.Runtime;
+using DingTalkInsights.Core;
 using Workbench.Sdk;
 
 namespace DingTalkInsights.Workbench;
@@ -19,6 +20,7 @@ public sealed class WorkbenchMonitorTask:IMonitoringCoordinator
     bool terminal,stopping,registered;
     Task cleanup=Task.CompletedTask,stopJoin=Task.CompletedTask;
     Task? deactivation;
+    TaskCompletionSource? hostStopAdmission;
     Task capturedLoop=Task.CompletedTask;
     readonly HashSet<StateSubscription> subscriptions=[];
 
@@ -40,7 +42,7 @@ public sealed class WorkbenchMonitorTask:IMonitoringCoordinator
     public bool IsStopping{get{lock(sync)return stopping;}}
     public Task CapturedLoop{get{lock(sync)return capturedLoop;}}
     public Task Completion{get{lock(sync)return Task.WhenAll(cleanup,stopJoin,active?.Retired.Task??pending?.Retired.Task??Task.CompletedTask);}}
-    public object Observation{get{lock(sync)return new{Epoch=epoch,PendingStart=pending is not null,WorkerOwned=active is not null,Stopping=stopping,Terminal=terminal,Subscriptions=subscriptions.Count,ActualLoopCompleted=capturedLoop.IsCompleted};}}
+    public object Observation{get{lock(sync)return new{Epoch=epoch,PendingStart=pending is not null,WorkerOwned=active is not null,Stopping=stopping,Terminal=terminal,Subscriptions=subscriptions.Count,ActualLoopCompleted=capturedLoop.IsCompleted,AwaitingHostStop=hostStopAdmission is not null&&!hostStopAdmission.Task.IsCompleted};}}
     public IDisposable Subscribe(Action changed)
     {
         lock(sync){if(terminal)return new StateSubscription(this,changed);var subscription=new StateSubscription(this,changed);subscriptions.Add(subscription);return subscription;}
@@ -110,9 +112,10 @@ public sealed class WorkbenchMonitorTask:IMonitoringCoordinator
         lock(sync)
         {
             envelope=pending;
-            if(envelope is null||envelope.Claimed)return;
-            envelope.Claimed=true;pending=null;active=envelope;
+            if(envelope is not null&&!envelope.Claimed){envelope.Claimed=true;pending=null;active=envelope;}
+            else envelope=null;
         }
+        if(envelope is null){await AwaitHostStopAdmission(execution).ConfigureAwait(false);return;}
         Task originalLoop=Task.CompletedTask;
         using var cancelled=execution.CancellationToken.Register(()=>BeginCleanup(terminalStop:IsTerminal(execution.StopReason)||IsTerminal(stopReason())));
         try
@@ -133,7 +136,14 @@ public sealed class WorkbenchMonitorTask:IMonitoringCoordinator
                 lock(sync)capturedLoop=originalLoop;
             }
             lock(sync)envelope.Started.TrySetResult(started&&Valid(envelope)&&!execution.CancellationToken.IsCancellationRequested);
-            if(started)await originalLoop.ConfigureAwait(false);
+            if(started)
+            {
+                await originalLoop.ConfigureAwait(false);
+                var failed=controller.Snapshot.Health.Status==MonitorStatus.NeedsAttention;
+                lock(sync)
+                    if(failed&&!terminal&&!stopping&&!execution.CancellationToken.IsCancellationRequested)
+                        throw new RuntimeFault(RuntimeFailure.Source); // Host records only BackgroundTaskFailed, never a provider body.
+            }
         }
         finally
         {
@@ -141,7 +151,11 @@ public sealed class WorkbenchMonitorTask:IMonitoringCoordinator
             // Execution cancellation must explicitly stop real work: Start's linked CTS is disposed after its result.
             // This cleanup owns only controller/persistence work, never this registered delegate or registry Stop.
             var retiring=BeginCleanup(terminalStop:IsTerminal(execution.StopReason)||IsTerminal(stopReason()));
-            try{await Task.WhenAll(retiring,originalLoop).ConfigureAwait(false);}
+            try
+            {
+                await Task.WhenAll(retiring,originalLoop).ConfigureAwait(false);
+                await AwaitHostStopAdmission(execution).ConfigureAwait(false);
+            }
             finally
             {
                 lock(sync)
@@ -153,6 +167,16 @@ public sealed class WorkbenchMonitorTask:IMonitoringCoordinator
                 NotifyState();
             }
         }
+    }
+    async Task AwaitHostStopAdmission(IPluginBackgroundExecution execution)
+    {
+        TaskCompletionSource? admission;lock(sync)admission=hostStopAdmission;
+        if(admission is null)return;
+        // Do not await registry Stop (it awaits this delegate). Wait only for cancellation admission.
+        // Otherwise a fast controller loop can finish while SDK Stop is still persisting intent;
+        // the real host then sees an already completed worker and correctly leaves it Completed.
+        using var cancelled=execution.CancellationToken.Register(()=>admission.TrySetResult());
+        await admission.Task.ConfigureAwait(false);
     }
     Task BeginCleanup(bool terminalStop)
     {
@@ -171,7 +195,7 @@ public sealed class WorkbenchMonitorTask:IMonitoringCoordinator
             pending=null;
             // Synchronous invalidation happens before any SDK persistence/Stop wait, even with no registered job.
             var previous=cleanup;
-            if(terminalStop){terminal=true;cleanup=Task.WhenAll(previous,session.DeactivateAsync());}
+            if(terminalStop){terminal=true;hostStopAdmission?.TrySetResult();cleanup=Task.WhenAll(previous,session.DeactivateAsync());}
             else cleanup=controller.StopMonitoringAsync();
             result=cleanup;
         }
@@ -179,12 +203,19 @@ public sealed class WorkbenchMonitorTask:IMonitoringCoordinator
     }
     public async Task StopAsync()
     {
-        Task worker;lock(sync)worker=active?.Retired.Task??pending?.Retired.Task??Task.CompletedTask;
+        Task worker;TaskCompletionSource admission;
+        lock(sync)
+        {
+            worker=active?.Retired.Task??pending?.Retired.Task??Task.CompletedTask;
+            if(hostStopAdmission is null||hostStopAdmission.Task.IsCompleted)hostStopAdmission=new(TaskCreationOptions.RunContinuationsAsynchronously);
+            admission=hostStopAdmission;
+        }
         var retiring=BeginCleanup(terminalStop:IsTerminal(stopReason()));
         Task joined;lock(sync)joined=stopJoin=Join(retiring,worker);
         PluginTaskOperationResult result;
         try{result=await tasks.StopAsync(TaskId).ConfigureAwait(false);}
         catch(Exception){result=new(false,"Background stop could not complete.");}
+        finally{admission.TrySetResult();} // Unavailable/failed SDK operations must not orphan the worker handshake.
         if(!result.Succeeded&&!terminal)throw new RuntimeFault(RuntimeFailure.Busy); // Stopping still owns the real cleanup/lease.
         await joined.ConfigureAwait(false);
     }
