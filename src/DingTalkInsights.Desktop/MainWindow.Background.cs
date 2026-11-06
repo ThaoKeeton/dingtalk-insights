@@ -9,6 +9,7 @@ public sealed partial class MainWindow
 {
     MonitorSupervisor? supervisor;
     ContentDialog? activeDialog;
+    Task? hostStopTask;
     NativeTrayIcon? tray;
     bool startupAttempted,allowClose,exiting;
     int activationCount;
@@ -38,7 +39,8 @@ public sealed partial class MainWindow
         if(savedSettings.CloseToTray&&tray?.CanHide()==true){AppWindow.Hide();return true;}
         ShowMainWindow();StatusText.Text="通知区域不可用，窗口保持可见。请使用“停止”或“退出应用”；不会隐藏到无法恢复的位置。";return false;
     }
-    async Task StopFromHostAsync()
+    Task StopFromHostAsync()=>hostStopTask=CompleteHostStopAsync();
+    async Task CompleteHostStopAsync()
     {
         try{await StopMonitoringAsync();StatusText.Text="监控已停止并撤销重启恢复；已有断点、尝试和费用预留保留。";}
         catch(Exception){ShowMainWindow();StatusText.Text=MonitorNotices.For(MonitorFailure.Storage)+" 停止许可未能持久保存，请重试；窗口保持可见。";}

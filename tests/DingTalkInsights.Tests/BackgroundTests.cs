@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Collections.Concurrent;
 using DingTalkInsights.Core;
 
 internal static class BackgroundTests
@@ -96,6 +97,91 @@ internal static class BackgroundTests
         yield return ("background retained gap is never skipped on recovery",()=>Run(async()=>{var f=new Fixture(false);f.Config=f.Config with{Start=Now.AddDays(-40)};f.Current=f.Config;BackgroundPolicy.Approve(f.State,f.Config,Now,true);Assert(await f.Supervisor.StartAsync(f.Config,recover:true),"synthetic supervisor did not start");await f.Supervisor.Completion;Assert(f.Fetches==0&&f.State.Coverage.Count==0&&f.State.Supervisor.Failure==MonitorFailure.Retention);await f.Supervisor.StopAsync();}));
         yield return ("background clock rollback cannot reset budget",()=>Run(async()=>{var f=new Fixture(true);f.State.Reserve(f.Config.Model,0.001m,Now.AddDays(1));Assert(await f.Supervisor.StartAsync(f.Config,confirmed:true),"synthetic supervisor did not start");await f.Supervisor.Completion;Assert(f.Models==0&&f.State.Requests==1&&f.State.BudgetDay=="2034-03-03"&&f.State.Supervisor.Status==MonitorStatus.NeedsAttention);await f.Supervisor.StopAsync();}));
         yield return ("background impossible saved scheduling blocks recovery",()=>Run(async()=>{var f=new Fixture(false);BackgroundPolicy.Approve(f.State,f.Config,Now,true);f.State.Supervisor=f.State.Supervisor with{NextReadAt=Now.AddYears(1)};Assert(!await f.Supervisor.StartAsync(f.Config,recover:true)&&f.Fetches==0&&f.State.Supervisor.Status==MonitorStatus.NeedsAttention);}));
+        foreach(var recover in new[]{false,true})
+        foreach(var honorsCancellation in new[]{false,true})
+        {
+            var recovery=recover;var honors=honorsCancellation;
+            yield return ($"background Stop cancels pending {(recovery?"recovery":"confirmed start")} readiness on queued UI context ({(honors?"honors":"ignores")} cancellation)",()=>
+            {
+                var previous=SynchronizationContext.Current;var context=new QueuedContext();SynchronizationContext.SetSynchronizationContext(context);
+                var f=new Fixture(true);var release=new TaskCompletionSource<MonitoringConfiguration?>(TaskCreationOptions.RunContinuationsAsynchronously);
+                var validations=0;CancellationToken startupToken=default;Task<bool>? starting=null;Task? stopping=null;
+                f.Readiness=cancellation=>
+                {
+                    if(++validations!=1)return Task.FromResult<MonitoringConfiguration?>(f.Config);
+                    startupToken=cancellation;return honors?release.Task.WaitAsync(cancellation):release.Task;
+                };
+                try
+                {
+                    if(recovery)BackgroundPolicy.Approve(f.State,f.Config,Now,true);
+                    starting=f.Supervisor.StartAsync(f.Config,confirmed:!recovery,recover:recovery);
+                    context.PumpUntil(()=>validations==1,"startup readiness entry");
+                    stopping=f.Supervisor.StopAsync();
+                    if(!honors)release.TrySetResult(f.Config);
+                    context.PumpUntil(()=>starting.IsCompleted&&stopping.IsCompleted,"pending startup Stop retirement");
+                    Assert(!starting.GetAwaiter().GetResult(),"cancelled startup reported success");stopping.GetAwaiter().GetResult();
+                    Assert(startupToken.CanBeCanceled&&startupToken.IsCancellationRequested,"Stop did not cancel pending readiness");
+                    Assert(f.Fetches==0&&f.Models==0&&f.State.Requests==0&&f.State.Attempted.Count==0,"work dispatched after pending-start Stop request");
+                    Assert(f.State.UserStopped&&f.Store.Load().Recovery is null&&!f.Store.SavedStatuses.Contains(MonitorStatus.Running),"cancelled startup saved running authority");
+                }
+                finally
+                {
+                    try
+                    {
+                        release.TrySetResult(f.Config);var cleanup=f.Supervisor.StopAsync();
+                        context.PumpUntil(()=>cleanup.IsCompleted&&(starting is null||starting.IsCompleted)&&(stopping is null||stopping.IsCompleted),"startup test cleanup");
+                        cleanup.GetAwaiter().GetResult();
+                    }
+                    finally{SynchronizationContext.SetSynchronizationContext(previous);}
+                }
+            });
+        }
+        foreach(var crossing in new[]{"fetch","pre-model readiness"})
+        {
+            var boundary=crossing;
+            yield return ($"background actual UTC day cap survives midnight during {boundary} and restart",()=>Run(async()=>
+            {
+                var f=new Fixture(true);f.Config=f.Config with{Model=f.Config.Model with{MaxRequestsPerDay=1}};
+                f.Clock.Advance(DateTimeOffset.Parse("2034-03-02T23:59:50Z")-f.Clock.UtcNow);
+                var validations=0;var dispatches=new List<(string Actual,string Saved,int Requests)>();
+                f.Readiness=_=>
+                {
+                    if(++validations==3&&boundary=="pre-model readiness")f.Clock.Advance(TimeSpan.FromSeconds(20));
+                    return Task.FromResult<MonitoringConfiguration?>(f.Config);
+                };
+                f.Fetch=(scope,_)=>{if(f.Fetches==1&&boundary=="fetch")f.Clock.Advance(TimeSpan.FromSeconds(20));return Task.FromResult(f.Batch(scope));};
+                f.Analyze=(batch,task,_)=>{dispatches.Add((f.Clock.UtcNow.ToString("yyyy-MM-dd"),f.State.BudgetDay,f.State.Requests));return Task.FromResult(new ModelResult(new AnalysisReport(batch,[],[],task),1,1));};
+                BackgroundPolicy.Approve(f.State,f.Config,f.Clock.UtcNow,true);
+                try
+                {
+                    Assert(await f.Supervisor.StartAsync(f.Config,recover:true),"midnight supervisor did not start");await f.Clock.WaitForDelay();
+                    Assert(dispatches.Count==1&&dispatches[0]==("2034-03-03","2034-03-03",1),"first new-day dispatch reserved against stale day");
+                    var attempted=new HashSet<string>(f.State.Attempted);var reserved=f.State.ReservedUsd;
+                    f.Clock.Advance(TimeSpan.FromMinutes(1));await f.Clock.WaitForDelay();
+                    Assert(dispatches.Count==1&&f.State.Requests==1&&f.State.ReservedUsd==reserved&&f.State.Attempted.SetEquals(attempted),"next tick bypassed actual-day cap or marked deferred sources");
+                    Assert(f.State.Supervisor.ModelDeferredUntil==DateTimeOffset.Parse("2034-03-04T00:00:00Z"),"budget deferral used stale UTC day");
+                    await f.Supervisor.StopAsync(false);
+                    var r=new Fixture(true,f.Store.Load());r.Config=f.Config;r.Current=r.Config;
+                    r.Clock.Advance(f.Clock.UtcNow-r.Clock.UtcNow+TimeSpan.FromMinutes(1));
+                    var replayed=false;
+                    r.Analyze=(batch,task,_)=>
+                    {
+                        replayed|=batch.Messages.Any(message=>attempted.Contains(InsightState.AttemptKey(batch.Scope,message)));
+                        dispatches.Add((r.Clock.UtcNow.ToString("yyyy-MM-dd"),r.State.BudgetDay,r.State.Requests));
+                        return Task.FromResult(new ModelResult(new AnalysisReport(batch,[],[],task),1,1));
+                    };
+                    try
+                    {
+                        Assert(await r.Supervisor.StartAsync(r.Config,recover:true),"midnight restart did not start");await r.Clock.WaitForDelay();
+                        Assert(r.Models==0&&r.State.Requests==1&&r.State.ReservedUsd==reserved&&r.State.BudgetDay=="2034-03-03","restart reset actual-day usage");
+                        r.Clock.Advance(TimeSpan.FromDays(1));await r.Clock.WaitForDelay();
+                        Assert(r.Models==1&&!replayed&&dispatches[^1]==("2034-03-04","2034-03-04",1),"next UTC day replayed attempts or bypassed saved limits");
+                    }
+                    finally{await r.Supervisor.StopAsync();}
+                }
+                finally{await f.Supervisor.StopAsync(false);}
+            }));
+        }
         yield return ("background invalid persisted health fails safe",()=>{var s=new InsightState{Supervisor=new SupervisorHealth{ReadFailures=-1}};try{s.Validate();}catch(SafetyException){return;}throw new Exception("invalid health accepted");});
         yield return ("background clear index revokes recovery but retains budget",()=>{var s=new InsightState();BackgroundPolicy.Approve(s,Config(),Now,true);s.Reserve(new ModelSettings(),0.001m,Now);s.ClearIndex();Assert(s.Recovery is null&&s.UserStopped&&s.Requests==1);});
         yield return ("DWS transient classification requires positive wire evidence",()=>{Assert(DwsFailures.Classify("{\"outcome\":\"failure\",\"error\":{\"type\":\"api\",\"exit_code\":1,\"retryable\":true,\"http_status\":503}}",1).Category==MonitorFailure.TransientRead);foreach(var j in new[]{"{\"error\":{\"type\":\"api\"}}","{\"error\":{\"type\":\"auth\",\"retryable\":true}}","{\"error\":{\"type\":\"permission\",\"retryable\":true}}","{\"error\":{\"type\":\"api\",\"retryable\":true,\"http_status\":401}}","{\"outcome\":\"partial_failure\",\"error\":{\"type\":\"api\",\"retryable\":true}}","{\"error\":{\"type\":\"api\",\"retryable\":\"true\"}}","not-json"})Assert(DwsFailures.Classify(j,1).Category!=MonitorFailure.TransientRead);});
@@ -109,20 +195,35 @@ internal static class BackgroundTests
     sealed class Fixture
     {
         public InsightState State;public MemoryStore Store=new();public ManualClock Clock=new(Now);public MonitorSupervisor Supervisor;public MonitoringConfiguration Config,Current;public int Fetches,Models;public bool Incomplete;public List<QueryScope> Scopes=[];
+        public Func<CancellationToken,Task<MonitoringConfiguration?>>? Readiness;
         public Func<QueryScope,CancellationToken,Task<MessageBatch>>? Fetch;
         public Func<MessageBatch,string,CancellationToken,Task<ModelResult>>? Analyze;
         public Fixture(bool ai,InsightState? state=null)
         {
             State=state??new InsightState();Config=BackgroundTests.Config(ai);Current=Config;
-            Supervisor=new MonitorSupervisor(new MonitorEngine(State,Store),Store,async(s,c)=>{Fetches++;Scopes.Add(s);return Fetch is null?Batch(s):await Fetch(s,c);},async(b,t,c)=>{Models++;return Analyze is null?new ModelResult(new AnalysisReport(b,[],["Synthetic pending"],t),1,1):await Analyze(b,t,c);},_=>Task.FromResult<MonitoringConfiguration?>(Current==BackgroundTests.Config(ai)?Config:Current),Clock);
+            Supervisor=new MonitorSupervisor(new MonitorEngine(State,Store),Store,async(s,c)=>{Fetches++;Scopes.Add(s);return Fetch is null?Batch(s):await Fetch(s,c);},async(b,t,c)=>{Models++;return Analyze is null?new ModelResult(new AnalysisReport(b,[],["Synthetic pending"],t),1,1):await Analyze(b,t,c);},c=>Readiness is not null?Readiness(c):Task.FromResult<MonitoringConfiguration?>(Current==BackgroundTests.Config(ai)?Config:Current),Clock);
         }
         public MessageBatch Batch(QueryScope s)=>new(s,[new SourceMessage("message-"+s.End.ToUnixTimeSeconds(),s.ConversationId,"sender","Synthetic","Synthetic body",s.End.AddMinutes(-1))],!Incomplete,[],new Dictionary<string,JsonElement>());
     }
     sealed class MemoryStore:IStateStore
     {
-        string json="{}";public bool Fail;
+        string json="{}";public bool Fail;public List<MonitorStatus> SavedStatuses=[];
         public InsightState Load()=>JsonSerializer.Deserialize<InsightState>(json)!;
-        public void Save(InsightState state){if(Fail)throw new IOException("SYNTHETIC_STORAGE_SECRET");json=JsonSerializer.Serialize(state);}
+        public void Save(InsightState state){if(Fail)throw new IOException("SYNTHETIC_STORAGE_SECRET");json=JsonSerializer.Serialize(state);SavedStatuses.Add(state.Supervisor.Status);}
+    }
+    sealed class QueuedContext:SynchronizationContext
+    {
+        readonly ConcurrentQueue<(SendOrPostCallback Callback,object? State)> callbacks=new();
+        public override void Post(SendOrPostCallback callback,object? state)=>callbacks.Enqueue((callback,state));
+        public void PumpUntil(Func<bool> completed,string step)
+        {
+            var deadline=System.Diagnostics.Stopwatch.StartNew();
+            while(!completed()&&deadline.Elapsed<TimeSpan.FromSeconds(10))
+            {
+                if(callbacks.TryDequeue(out var item))item.Callback(item.State);else Thread.Yield();
+            }
+            if(!completed())throw new Exception("Queued UI context timed out: "+step);
+        }
     }
     sealed class ManualClock(DateTimeOffset now):IMonitorClock
     {

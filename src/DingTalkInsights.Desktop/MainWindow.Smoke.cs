@@ -84,11 +84,15 @@ public sealed partial class MainWindow
             Check(monitorCancellation is null,"native-tick-error-pauses-monitor");
             Navigate("monitor");await InvokeAsync("start-monitor");
             if(stopButton is not null)Invoke(stopButton);
-            if(monitorTask is not null)await monitorTask;
-            Check(monitorCancellation is null&&state.Messages.Count==4&&state.Recovery is null&&state.UserStopped,"native-monitor-stop-dedup");
+            if(hostStopTask is not null)await hostStopTask;
+            var stoppedState=store.Load();
+            Check(monitorCancellation is null&&state.Messages.Count==4&&state.Recovery is null&&state.UserStopped
+                &&stoppedState.Messages.Count==4&&stoppedState.Recovery is null&&stoppedState.UserStopped,"native-monitor-stop-dedup");
             Navigate("monitor");await InvokeAsync("start-monitor");
-            tray?.HandleCommand(2);if(monitorTask is not null)await monitorTask;
-            Check(monitorCancellation is null&&state.Recovery is null&&state.UserStopped,"native-tray-stop-command-revokes-recovery");
+            tray?.HandleCommand(2);if(hostStopTask is not null)await hostStopTask;
+            stoppedState=store.Load();
+            Check(monitorCancellation is null&&state.Recovery is null&&state.UserStopped
+                &&stoppedState.Recovery is null&&stoppedState.UserStopped,"native-tray-stop-command-revokes-recovery");
             Navigate("settings");theme.SelectedIndex=1;Root.RequestedTheme=ElementTheme.Light;await Task.Delay(100);await CaptureAsync("settings-light.png");
             theme.SelectedIndex=2;Root.RequestedTheme=ElementTheme.Dark;await Task.Delay(100);await CaptureAsync("settings-dark.png");
             Check(Root.ActualTheme==ElementTheme.Dark,"native-theme-switch");

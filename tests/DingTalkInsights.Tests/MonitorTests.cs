@@ -40,6 +40,39 @@ internal static class MonitorTests
         yield return ("旧版未知来源尝试在扩展保留期后仍保护原修订",()=>{var b=Demo.CreateBatch();var s=new InsightState();var attempt=InsightState.AttemptKey(b.Scope,b.Messages[0]);s.Attempted.Add(attempt);s.Trim(b.Scope.End,30);s.Trim(b.Scope.End.AddDays(31),365);Assert(s.Attempted.Contains(attempt));});
         yield return ("未来十点一天保留允许模拟范围和原文入库",()=>{var reference=DateTimeOffset.Parse("2034-03-02T02:00:00Z");var batch=Demo.CreateBatch(reference);var s=new InsightState();s.Trim(reference,1);s.EnsureScopeRetained(batch.Scope);Assert(s.Ingest(batch)==4&&s.Messages.Count==4&&batch.Scope.End<=reference&&batch.Scope.Start>=DateTimeOffset.Parse("2034-03-01T02:00:00Z"));});
         yield return ("未来十点一天保留可搜索模拟原文",()=>{var reference=DateTimeOffset.Parse("2034-03-02T02:00:00Z");var batch=Demo.CreateBatch(reference);var s=new InsightState();s.Trim(reference,1);s.Ingest(batch);Assert(LocalSearch.Find(s,batch.Scope,"登录",reference).Messages.Count==2);});
+        yield return ("按需分析等待引擎跨午夜后按实际派发日预留且不绕过上限",()=>
+        {
+            async Task Check()
+            {
+                var began=DateTimeOffset.Parse("2034-03-02T23:59:50Z");var current=began;
+                var batch=Demo.CreateBatch(began)with{IsDemo=false};var state=new InsightState();var store=new MemoryStore();var engine=new MonitorEngine(state,store);
+                var model=new ModelSettings{MaxRequestsPerDay=1};var release=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);var entered=false;var calls=0;
+                Task<ModelResult> Analyze(MessageBatch selected,string task,CancellationToken _)
+                {
+                    calls++;return Task.FromResult(new ModelResult(new AnalysisReport(selected,[],[],task),1,1));
+                }
+                var collecting=engine.TickAsync(batch.Scope,async(scope,_)=>
+                {
+                    entered=true;await release.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                    return batch with{Scope=scope,Messages=batch.Messages.Where(message=>message.CreatedAt>=scope.Start&&message.CreatedAt<scope.End).ToArray()};
+                },null,model,30,began);
+                Task<ModelResult>? analyzing=null;
+                try
+                {
+                    Assert(entered);
+                    analyzing=engine.AnalyzeOnceAsync(batch,"synthetic task",model,Analyze,began,utcNow:()=>current);
+                    Assert(!analyzing.IsCompleted);current=began.AddSeconds(20);release.TrySetResult();await collecting;await analyzing;
+                    Assert(calls==1&&state.BudgetDay=="2034-03-03"&&state.Requests==1);
+                    var attempted=state.Attempted.Count;var reserved=state.ReservedUsd;
+                    MonitoringFault? denied=null;
+                    try{await engine.AnalyzeOnceAsync(batch with{Messages=batch.Messages.Select(message=>message with{Text=message.Text+" revised"}).ToArray()},"synthetic task",model,Analyze,began,utcNow:()=>current);}
+                    catch(MonitoringFault error){denied=error;}
+                    Assert(denied?.Category==MonitorFailure.Budget&&denied.DeferredUntil==DateTimeOffset.Parse("2034-03-04T00:00:00Z")&&calls==1&&state.Attempted.Count==attempted&&state.ReservedUsd==reserved);
+                }
+                finally{release.TrySetResult();await collecting;if(analyzing is not null)await analyzing;}
+            }
+            Check().GetAwaiter().GetResult();
+        });
         yield return ("全天参考时间的完整模拟范围均在一天保留内",()=>{foreach(var clock in new[]{"2034-03-02T00:00:00+08:00","2034-03-02T09:00:00+08:00","2034-03-02T10:00:00+08:00","2034-03-02T23:59:59+08:00"}){var reference=DateTimeOffset.Parse(clock);var batch=Demo.CreateBatch(reference);var s=new InsightState();s.Trim(reference,1);s.EnsureScopeRetained(batch.Scope);Assert(batch.Complete&&batch.Scope.End<=reference&&batch.Messages.All(m=>m.CreatedAt>=s.RetentionCutoff&&m.CreatedAt<reference));}});
     }
     static MessageBatch OldBatch(){var b=Demo.CreateBatch();return b with{Scope=b.Scope with{Start=b.Scope.Start.AddDays(-40),End=b.Scope.End.AddDays(-40)},Messages=b.Messages.Select(m=>m with{CreatedAt=m.CreatedAt.AddDays(-40)}).ToArray()};}

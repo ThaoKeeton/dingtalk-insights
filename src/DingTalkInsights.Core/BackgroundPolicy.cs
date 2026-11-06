@@ -6,10 +6,11 @@ public enum MonitorFailure { None, TransientRead, Authorization, Validation, Sch
 public enum MonitorStatus { Stopped, Running, ReadRetry, NeedsAttention }
 
 /// <summary>Only safe categories cross into health/UI; never carries transport text or an inner exception.</summary>
-public sealed class MonitoringFault(MonitorFailure category,TimeSpan? retryAfter=null):SafetyException(MonitorNotices.For(category))
+public sealed class MonitoringFault(MonitorFailure category,TimeSpan? retryAfter=null,DateTimeOffset? deferredUntil=null):SafetyException(MonitorNotices.For(category))
 {
     public MonitorFailure Category {get;}=category;
     public TimeSpan? RetryAfter {get;}=retryAfter;
+    public DateTimeOffset? DeferredUntil {get;}=deferredUntil;
 }
 public static class MonitorNotices
 {

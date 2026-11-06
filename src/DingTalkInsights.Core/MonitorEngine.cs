@@ -23,7 +23,7 @@ public sealed class MonitorEngine(InsightState state,IStateStore store)
         return initial with{Start=start,End=end};
     }
     public async Task<TickResult> TickAsync(QueryScope initial,Func<QueryScope,CancellationToken,Task<MessageBatch>> fetch,
-        Func<MessageBatch,string,CancellationToken,Task<ModelResult>>? analyze,ModelSettings model,int retentionDays,DateTimeOffset now,CancellationToken cancellation=default,bool tolerateModelFailure=false,Func<CancellationToken,Task>? beforeModel=null)
+        Func<MessageBatch,string,CancellationToken,Task<ModelResult>>? analyze,ModelSettings model,int retentionDays,DateTimeOffset now,CancellationToken cancellation=default,bool tolerateModelFailure=false,Func<CancellationToken,Task>? beforeModel=null,Func<DateTimeOffset>? utcNow=null)
     {
         await semaphore.WaitAsync(cancellation);
         try
@@ -43,8 +43,8 @@ public sealed class MonitorEngine(InsightState state,IStateStore store)
                     var selected=batch with{Scope=initial with{End=now},Messages=pending,Complete=false,Warnings=batch.Warnings.Concat(["本次只整理尚未处理的增量候选，最多 40 条；不是全部历史结论。"]).ToArray()};
                     if(beforeModel is not null)await beforeModel(cancellation);
                     cancellation.ThrowIfCancellationRequested();
-                    try{report=(await AnalyzeLocked(selected,"发现可能的沟通难点，核对口径、验收和待确认事项，不进行人员评价。",model,analyze,now,cancellation)).Report;}
-                    catch(MonitoringFault e)when(tolerateModelFailure&&e.Category==MonitorFailure.Budget){modelFailure=e.Category;deferred=new DateTimeOffset(now.UtcDateTime.Date.AddDays(1),TimeSpan.Zero);}
+                    try{report=(await AnalyzeLocked(selected,"发现可能的沟通难点，核对口径、验收和待确认事项，不进行人员评价。",model,analyze,now,cancellation,utcNow)).Report;}
+                    catch(MonitoringFault e)when(tolerateModelFailure&&e.Category==MonitorFailure.Budget){modelFailure=e.Category;deferred=e.DeferredUntil;}
                     catch(ModelAttemptFailure e)when(tolerateModelFailure){modelFailure=e.Category;}
                 }
             }
@@ -53,18 +53,20 @@ public sealed class MonitorEngine(InsightState state,IStateStore store)
         finally{semaphore.Release();}
     }
     public async Task<ModelResult> AnalyzeOnceAsync(MessageBatch batch,string task,ModelSettings model,
-        Func<MessageBatch,string,CancellationToken,Task<ModelResult>> analyze,DateTimeOffset now,CancellationToken cancellation=default)
+        Func<MessageBatch,string,CancellationToken,Task<ModelResult>> analyze,DateTimeOffset now,CancellationToken cancellation=default,Func<DateTimeOffset>? utcNow=null)
     {
         await semaphore.WaitAsync(cancellation);
-        try{state.Trim(now,state.RetentionDays);state.EnsureRetained(batch);return await AnalyzeLocked(batch,task,model,analyze,now,cancellation);}
+        try{state.Trim(now,state.RetentionDays);state.EnsureRetained(batch);return await AnalyzeLocked(batch,task,model,analyze,now,cancellation,utcNow);}
         finally{semaphore.Release();}
     }
     private async Task<ModelResult> AnalyzeLocked(MessageBatch batch,string task,ModelSettings model,
-        Func<MessageBatch,string,CancellationToken,Task<ModelResult>> analyze,DateTimeOffset now,CancellationToken cancellation)
+        Func<MessageBatch,string,CancellationToken,Task<ModelResult>> analyze,DateTimeOffset now,CancellationToken cancellation,Func<DateTimeOffset>? utcNow)
     {
         cancellation.ThrowIfCancellationRequested();
         var request=OpenAiClient.BuildRequest(batch,task,model);
-        if(!batch.IsDemo)state.Reserve(model,OpenAiClient.Reservation(request,model),now);
+        // Fetch, readiness and semaphore waits may cross UTC midnight. Reserve on the dispatch boundary.
+        var reservation=OpenAiClient.Reservation(request,model);
+        if(!batch.IsDemo)state.Reserve(model,reservation,utcNow?.Invoke()??DateTimeOffset.UtcNow);
         state.MarkAttempted(batch.Scope,batch.Messages);
         // Commit the reservation and attempt BEFORE HTTP: a crash must not release them.
         Save();

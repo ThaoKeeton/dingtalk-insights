@@ -155,7 +155,7 @@ public sealed class InsightState
         var day=now.UtcDateTime.ToString("yyyy-MM-dd");
         if(BudgetDay.Length>0&&string.CompareOrdinal(day,BudgetDay)<0)throw new SafetyException("本机 UTC 日期回退，费用预留未重置；请先核对系统时间。");
         if(BudgetDay!=day){BudgetDay=day;ReservedUsd=0;Requests=0;InputTokens=0;OutputTokens=0;}
-        if(Requests>=settings.MaxRequestsPerDay||ReservedUsd+reservation>settings.DailyBudgetUsd)throw new MonitoringFault(MonitorFailure.Budget);
+        if(Requests>=settings.MaxRequestsPerDay||ReservedUsd+reservation>settings.DailyBudgetUsd)throw new MonitoringFault(MonitorFailure.Budget,deferredUntil:new DateTimeOffset(now.UtcDateTime.Date.AddDays(1),TimeSpan.Zero));
         ReservedUsd+=reservation;Requests++;
     }
     public void Trim(DateTimeOffset now,int retentionDays)
