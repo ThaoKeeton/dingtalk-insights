@@ -11,7 +11,7 @@
     <SelfContained>true</SelfContained>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <PublishTrimmed>false</PublishTrimmed><PublishAot>false</PublishAot><PublishSingleFile>false</PublishSingleFile>
-    <WorkbenchSnapshotRoot Condition="'$(WorkbenchSnapshotRoot)' == ''">$(MSBuildThisFileDirectory)../../eng/vendor/workbench-82bd958e</WorkbenchSnapshotRoot>
+    <WorkbenchSnapshotRoot Condition="'$(WorkbenchSnapshotRoot)' == ''">$(MSBuildThisFileDirectory)../../eng/vendor/workbench-27154465</WorkbenchSnapshotRoot>
     <ApplicationManifest>$(WorkbenchSnapshotRoot)/src/Workbench.App/app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
@@ -29,5 +29,12 @@
     <Compile Include="$(WorkbenchSnapshotRoot)/src/Workbench.App/HostRuntime.cs" Link="Presenter/HostRuntime.cs" />
     <Compile Include="$(WorkbenchSnapshotRoot)/src/Workbench.App/RunOptions.cs" Link="Presenter/RunOptions.cs" />
     <Compile Include="$(WorkbenchSnapshotRoot)/src/Workbench.App/NativeSmoke.cs" Link="Presenter/NativeSmoke.cs" />
+    <Compile Include="$(WorkbenchSnapshotRoot)/src/Workbench.App/HostRuntimeOptions.cs" Link="Presenter/HostRuntimeOptions.cs" />
+    <Compile Include="$(WorkbenchSnapshotRoot)/src/Workbench.App/BackgroundPage.cs" Link="Presenter/BackgroundPage.cs" />
+    <Compile Include="$(WorkbenchSnapshotRoot)/src/Workbench.App/CredentialPage.cs" Link="Presenter/CredentialPage.cs" />
+    <Compile Include="$(WorkbenchSnapshotRoot)/src/Workbench.App/PackageMaintenancePage.cs" Link="Presenter/PackageMaintenancePage.cs" />
+    <Compile Include="$(WorkbenchSnapshotRoot)/src/Workbench.App/NativeRuntimeProbe.cs" Link="Presenter/NativeRuntimeProbe.cs" />
+    <Compile Include="$(WorkbenchSnapshotRoot)/src/Workbench.App/NativeManagementProbe.cs" Link="Presenter/NativeManagementProbe.cs" />
+    <Compile Include="$(WorkbenchSnapshotRoot)/src/Workbench.App/NativeRestartProbe.cs" Link="Presenter/NativeRestartProbe.cs" />
   </ItemGroup>
 </Project>

@@ -234,7 +234,7 @@ function Run-Sequence([string]$HostDir, [string]$PackageDir, [string]$Variant) {
     Remove-Item -LiteralPath $installed -Recurse -Force
     Invoke-Phase $HostDir $PackageDir $root $runId 'absent' $Variant
     # New SDK maintenance is separate from the retained old offline-delete regression.
-    # Every helper owns and releases the actual UserRoot lease, and exits before the next genuine presenter starts.
+    # Helpers only install/stage. The exact platform HostRuntime owns its lease and applies pending work before Discover/Restore.
     $maintenanceZip = Join-Path $root 'actual-plugin.zip'
     Compress-Archive -Path "$PackageDir/*" -DestinationPath $maintenanceZip
     function Invoke-OwnedMaintenance([string]$Action, [string]$Extra = '') {
@@ -248,10 +248,8 @@ function Run-Sequence([string]$HostDir, [string]$PackageDir, [string]$Variant) {
     }
     Invoke-OwnedMaintenance 'install' $maintenanceZip
     Invoke-Phase $HostDir $PackageDir $root $runId 'maintained' $Variant
-    Invoke-OwnedMaintenance 'apply'
     Invoke-Phase $HostDir $PackageDir $root $runId 'removed' $Variant
     Invoke-OwnedMaintenance 'rollback'
-    Invoke-OwnedMaintenance 'apply'
     Invoke-Phase $HostDir $PackageDir $root $runId 'rolledback' $Variant
     Copy-Item -LiteralPath "$root/evidence" -Destination "$evidence/$Variant-native" -Recurse
     # Do not upload even synthetic encrypted state/credentials; retain local root for diagnosis only.

@@ -9,7 +9,7 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <GenerateDependencyFile>true</GenerateDependencyFile>
     <Version>0.3.2</Version>
-    <WorkbenchSnapshotRoot Condition="'$(WorkbenchSnapshotRoot)' == ''">$(MSBuildThisFileDirectory)../../eng/vendor/workbench-82bd958e</WorkbenchSnapshotRoot>
+    <WorkbenchSnapshotRoot Condition="'$(WorkbenchSnapshotRoot)' == ''">$(MSBuildThisFileDirectory)../../eng/vendor/workbench-27154465</WorkbenchSnapshotRoot>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />

@@ -9,7 +9,7 @@ if ((dotnet --version).Trim() -ne '10.0.403') { throw 'Select .NET SDK 10.0.403 
 if (Test-Path $out) { throw 'Output directory already exists; retain evidence or explicitly remove the previous owned build before retrying' }
 New-Item -ItemType Directory -Path $out | Out-Null
 Set-Content -LiteralPath (Join-Path $out '.dti-build-owner') -Value 'DingTalkInsights.Workbench 0.3.2' -NoNewline
-$pin = Join-Path $repo 'eng/vendor/workbench-82bd958e'
+$pin = Join-Path $repo 'eng/vendor/workbench-27154465'
 $toolProject = Join-Path $repo 'tools/DingTalkInsights.PackageTool/DingTalkInsights.PackageTool.csproj'
 $hostProject = Join-Path $repo 'tests/DingTalkInsights.Workbench.AcceptanceHost/DingTalkInsights.Workbench.AcceptanceHost.csproj'
 $pluginProject = Join-Path $repo 'src/DingTalkInsights.Workbench/DingTalkInsights.Workbench.csproj'

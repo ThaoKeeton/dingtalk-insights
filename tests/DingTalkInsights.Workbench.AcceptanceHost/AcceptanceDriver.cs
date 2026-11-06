@@ -30,6 +30,13 @@ internal static partial class AcceptanceDriver
         var pri=Path.Combine(AppContext.BaseDirectory,"DingTalkInsights.Workbench.AcceptanceHost.pri");
         Require(File.Exists(pri)&&new FileInfo(pri).Length>0,"Complete native host/main PRI missing.");
         Record("SDK-generated WinUI initialization, original App.xaml resources/metadata and nonempty main PRI");
+        using(var trace=JsonDocument.Parse(JsonSerializer.Serialize(report.StartupStages)))
+        {
+            var stages=trace.RootElement.EnumerateArray().Select(s=>s.GetProperty("stage").GetString()).ToList();
+            var apply=stages.IndexOf("applying-pending-package-maintenance");var discover=stages.IndexOf("discovering-packages");var restore=stages.IndexOf("restoring-enabled-packages");
+            Require(apply>=0&&discover>apply&&restore>discover,"Fixed original HostRuntime did not apply maintenance before discovery and restore.");
+        }
+        Record("Exact platform HostRuntime acquires user-root ownership and applies pending packages before all discovery/restore");
         var manager=window.SmokeManager;
         var data=Path.Combine(options.UserRoot,"data",Id);
         var packageHash=Fingerprint(options.Package);

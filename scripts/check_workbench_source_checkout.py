@@ -16,7 +16,7 @@ import sys
 import tempfile
 
 
-PIN = Path("eng/vendor/workbench-82bd958e")
+PIN = Path("eng/vendor/workbench-27154465")
 
 
 def git_blob(data: bytes) -> str:

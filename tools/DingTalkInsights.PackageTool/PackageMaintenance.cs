@@ -14,7 +14,7 @@ internal static class PackageMaintenance
         RejectLinks(root);using var marker=JsonDocument.Parse(File.ReadAllBytes(Path.Combine(root,".dti-acceptance-owner.json")));
         if(marker.RootElement.GetProperty("runId").GetString()!=runId)throw new IOException("Maintenance owner marker mismatch.");return expected;
     }
-    // Guarded acceptance integration helper, not a shipping host bootstrap or generic management UI.
+    // Guarded install/staging helper; the original native HostRuntime owns normal startup replay.
     internal static async Task<int> Run(string[] args)
     {
         var mode=args[0];var root=ValidateRoot(args[1],args[2]);var user=Path.Combine(root,"user");RejectLinks(user);Directory.CreateDirectory(user);
@@ -34,7 +34,7 @@ internal static class PackageMaintenance
         }
         await store.RefreshAsync();var after=Preserved(root);
         if(!before.OrderBy(p=>p.Key).SequenceEqual(after.OrderBy(p=>p.Key)))throw new IOException("Maintenance changed current data/settings/secret ciphertext or external canonical state.");
-        var summary=new{succeeded=results.All(r=>r.Succeeded),mode,scope="guarded SDK Core helper before any discovery; unchanged shipping App does not apply maintenance",keepData="unconditional; no purge or historical-data restore",results,
+        var summary=new{succeeded=results.All(r=>r.Succeeded),mode,scope="guarded SDK Core install/staging helper; fixed original native HostRuntime owns startup replay before any discovery",keepData="unconditional; no purge or historical-data restore",results,
             preserved=after,pending=store.PendingOperations.Select(p=>new{p.PluginId,p.Kind,p.Phase}),history=store.History.Select(h=>new{h.PluginId,h.Kind,h.Version,h.HistoryId,dataBackup=h.DataBackupPath is not null}),diagnostics=store.Diagnostics.Select(d=>d.Code.ToString())};
         Directory.CreateDirectory(Path.Combine(root,"evidence"));File.WriteAllText(Path.Combine(root,"evidence","maintenance-"+mode+".json"),JsonSerializer.Serialize(summary));
         Console.WriteLine(JsonSerializer.Serialize(new{summary.succeeded,mode,resultCount=results.Count,pending=store.PendingOperations.Count,history=store.History.Count,preserved=true}));

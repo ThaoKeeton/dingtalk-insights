@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Work only in dingtalk-insights; preserve existing branches, standalone and data.
-- Keep exact SDK `82bd958e220aaf94ccdbf1ea68b0ec53b770706a` and its 35 immutable inputs; no vendor edits.
+- Keep fixed SDK/host `27154465c08d132798c8ea7b637f137f7340a90b` and its44 immutable inputs; preserve SDK82 and656 rollback snapshots; no vendor edits.
 - No live chats, real credentials or real service tests; all sending uses a local simulation.
 - Never retry the denied draft PR. No merge or release publication is part of this task.
 - Initialization/navigation/load never read values or restore business/purpose authority.
@@ -34,7 +34,7 @@
 
 - [ ] Write tests for no initialization I/O, confirmation/purpose enforcement, revision-bound local-only dispatch, partial save/read/change/deletion, unsupported store and ignored provider retirement. Run RED for the missing interfaces, then implement and run portable/bridge suites GREEN.
 - [ ] Add revoke-during-model/send tests, using the real durable attempts and canonical lease; confirm stale results cannot commit or resend after re-enable. Run RED then GREEN for any newly exposed defect.
-- [ ] Commit the tested Runtime/bridge boundary.
+- [x] Commit the tested Runtime/bridge boundary (45f7a5d).
 
 ### Task 2: Native integration and real host verification
 
@@ -43,6 +43,8 @@
 - [ ] Inject/register the public SDK provider; native save/use/delete select exact locations; explicit revoke stays responsive. Keep empty password controls and safe notices.
 - [ ] Exercise actual Manager secret storage on Windows and synthetic unsupported storage on Linux, plus installed-plugin native synthetic save/approve/revoke/delete and page recreation. No model or send network call in native tests.
 - [ ] Build/verify portable, bridge, package/checkout and compile-only Linux native references. Commit and push the existing authorized feature branch, inspect fresh Windows run and package artifacts.
+- [x] Parent task-state steering: delayed SDK Stop cannot leave explicit stop as Completed; natural business failure reaches real Manager Faulted. Regression/mutation RED→GREEN;39/39 bridge checks (2b4940a).
+- [ ] Integrate fixed original27154465 presenter/HostRuntime and public SDK; native removal/rollback replay must occur in original startup without an apply helper.
 
 ### Task 3: Review, evidence and handoff
 
