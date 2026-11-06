@@ -38,7 +38,15 @@ function Safe-NativeFrames($Frames) {
         [ordered]@{ type = (Safe-NativeLabel $_.Type 160); method = (Safe-NativeLabel $_.Method 100); file = (Safe-NativeLabel $_.File 100); line = [int]$_.Line }
     })
 }
-function New-NativeFailureSummary($Result, [bool]$ParseFailed, [string]$StderrText) {
+function Safe-CloseTask($Task) {
+    if ($null -eq $Task) { return $null }
+    return [ordered]@{ id = [int]$Task.id; status = (Safe-NativeLabel $Task.status 40); completedSuccessfully = $Task.completedSuccessfully }
+}
+function Safe-ClosePresenter($Presenter) {
+    if ($null -eq $Presenter) { return $null }
+    return [ordered]@{ closing = $Presenter.closing; stopped = $Presenter.stopped; allowClose = $Presenter.allowClose }
+}
+function New-NativeFailureSummary($Result, [bool]$ParseFailed, [string]$StderrText, $Close) {
     $stage = if ($ParseFailed) { 'invalid-native-report' } elseif ($null -eq $Result) { 'missing-native-report' } else { $Result.stage }
     $errorType = $Result.errorType
     # Compatibility with original RunOptions failure artifacts: extract the type only, never the exception body.
@@ -75,7 +83,49 @@ function New-NativeFailureSummary($Result, [bool]$ParseFailed, [string]$StderrTe
         settingsPreferencesMatch = $Result.settingsFixture.PreferencesMatch
         settingsObservationErrorType = (Safe-NativeLabel $Result.settingsFixture.ErrorType 80)
         stderrCharacters = $StderrText.Length
+        closeBoundary = (Safe-NativeLabel $Close.boundary 80)
+        closeEvents = @($Close.events | ForEach-Object { Safe-NativeLabel $_ 40 })
+        closingObserved = $Close.closingObserved
+        closedObserved = $Close.closedObserved
+        destroyingObserved = $Close.destroyingObserved
+        originalPresenterBefore = (Safe-ClosePresenter $Close.originalPresenterBefore)
+        originalPresenter = (Safe-ClosePresenter $Close.originalPresenter)
+        originalCloseTask = (Safe-CloseTask $Close.originalCloseTask)
+        originalLoop = (Safe-CloseTask $Close.originalLoop)
+        controllerRetirement = (Safe-CloseTask $Close.controllerRetirement)
+        sessionRetirement = (Safe-CloseTask $Close.sessionRetirement)
+        closeActive = $Close.active
+        closeMonitoring = $Close.monitoring
+        closeResources = if ($null -ne $Close.resources) { [ordered]@{
+            pendingOperations = $Close.resources.PendingOperations; subscriptions = $Close.resources.Subscriptions; storeOwned = $Close.resources.StoreOwned
+            supervisorPresent = $Close.resources.SupervisorPresent; monitoringCompleted = $Close.resources.MonitoringCompleted
+            dispatches = $Close.resources.Dispatches; ownedStoreWrites = $Close.resources.OwnedStoreWrites
+        } } else { $null }
+        closePendingPersistence = $Close.pendingPersistence
+        closeLeases = @($Close.leases | Where-Object { $null -ne $_ } | ForEach-Object { [ordered]@{
+            name = (Safe-NativeLabel $_.name 40); acquired = $_.acquired; errorType = (Safe-NativeLabel $_.errorType 80)
+            hResult = if ([string]$_.hResult -match '^0x[0-9A-Fa-f]{8}$') { [string]$_.hResult } else { '' }
+        } })
+        closeDiagnosticErrorType = (Safe-NativeLabel $Close.diagnosticErrorType 80)
     }
+}
+function Get-OwnedDataFingerprint([string]$Path) {
+    Reject-Links $Path
+    [string[]]$relativePaths = @([IO.Directory]::EnumerateFiles($Path, '*', [IO.SearchOption]::AllDirectories) | ForEach-Object { [IO.Path]::GetRelativePath($Path, $_).Replace('\', '/') })
+    [Array]::Sort($relativePaths, [StringComparer]::Ordinal)
+    $hash = [Security.Cryptography.IncrementalHash]::CreateHash([Security.Cryptography.HashAlgorithmName]::SHA256)
+    try {
+        foreach ($relative in $relativePaths) {
+            $file = Join-Path $Path $relative
+            Reject-Links $file
+            $hash.AppendData([Text.Encoding]::UTF8.GetBytes($relative))
+            $hash.AppendData([byte[]]@(0))
+            $hash.AppendData([IO.File]::ReadAllBytes($file))
+            $hash.AppendData([byte[]]@(0))
+        }
+        return [Convert]::ToHexString($hash.GetHashAndReset())
+    }
+    finally { $hash.Dispose() }
 }
 function Invoke-Phase([string]$HostDir, [string]$PackageDir, [string]$Root, [string]$RunId, [string]$Phase, [string]$Variant) {
     Assert-OwnedRoot $Root $RunId
@@ -119,8 +169,19 @@ function Invoke-Phase([string]$HostDir, [string]$PackageDir, [string]$Root, [str
             try { $result = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json }
             catch { $parseFailed = $true }
         }
-        $passed = -not $timedOut -and $exitCode -eq 0 -and $null -ne $result -and $result.succeeded
+        # Preserve bounded callback evidence even when the child exits before final success.
+        $close = $null
+        $closeTrace = Join-Path $Root "evidence/$Phase.close.jsonl"
+        Reject-Links $closeTrace
+        if (Test-Path -LiteralPath $closeTrace) {
+            if ((Get-Item -LiteralPath $closeTrace).Length -gt 131072) { throw 'Native close observation bound exceeded' }
+            Copy-Item -LiteralPath $closeTrace -Destination "$evidence/$Variant-$Phase.close.jsonl"
+            try { $close = Get-Content -LiteralPath $closeTrace | Select-Object -Last 1 | ConvertFrom-Json }
+            catch { $parseFailed = $true }
+        }
+        $passed = -not $timedOut -and $exitCode -eq 0 -and -not $parseFailed -and $null -ne $result -and $result.succeeded -and $null -ne $close -and -not $close.diagnosticErrorType
         $postExitLeasesAcquired = $false
+        $postExitDataUnchanged = $false
         if ($passed) {
             # The exact owner has exited; prove host, installed demo and both real
             # source-linked canonical stores accept a new exclusive owner.
@@ -131,13 +192,15 @@ function Invoke-Phase([string]$HostDir, [string]$PackageDir, [string]$Root, [str
                 $lease.Dispose()
             }
             $postExitLeasesAcquired = $true
+            if ([string]$close.destroyedDataSha256 -notmatch '^[0-9A-F]{64}$' -or (Get-OwnedDataFingerprint (Join-Path $Root 'user/data/com.projectworkbench.dingtalk-insights')) -ne $close.destroyedDataSha256) { throw 'Native data changed between actual destruction and verified process exit' }
+            $postExitDataUnchanged = $true
         }
         $summary = $null
         if (-not $passed) {
-            $summary = New-NativeFailureSummary $result $parseFailed $childStderr
-            Write-Host ("Native failure summary ($Variant/$Phase, exit=$exitCode, timeout=$timedOut): " + ($summary | ConvertTo-Json -Compress -Depth 5))
+            $summary = New-NativeFailureSummary $result $parseFailed $childStderr $close
+            Write-Host ("Native failure summary ($Variant/$Phase, exit=$exitCode, timeout=$timedOut): " + ($summary | ConvertTo-Json -Compress -Depth 8))
         }
-        $phaseResult = [ordered]@{ succeeded = $passed; variant = $Variant; phase = $Phase; processId = $ownedPid; timedOut = $timedOut; exitCode = $exitCode; actualExitVerified = $true; postExitLeasesAcquired = $postExitLeasesAcquired; failureSummary = $summary; provisionalNativeResult = $result }
+        $phaseResult = [ordered]@{ succeeded = $passed; variant = $Variant; phase = $Phase; processId = $ownedPid; timedOut = $timedOut; exitCode = $exitCode; actualExitVerified = $true; postExitLeasesAcquired = $postExitLeasesAcquired; postExitDataUnchanged = $postExitDataUnchanged; closeObservation = $close; failureSummary = $summary; provisionalNativeResult = $result }
         $phaseResult | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath "$evidence/$Variant-$Phase.final.json"
         $script:final.runs += $phaseResult
         if (-not $passed) { throw "Native phase failed: $Variant/$Phase; timeout=$timedOut; exit=$exitCode. Provisional success cannot override this failure." }
