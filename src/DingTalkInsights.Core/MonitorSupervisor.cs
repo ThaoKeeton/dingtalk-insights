@@ -32,10 +32,10 @@ public sealed class MonitorSupervisor(MonitorEngine engine,IStateStore store,
     public event Action<TickResult?>? Changed;
     public event Action<bool>? Activity;
 
-    public async Task<bool> StartAsync(MonitoringConfiguration config,bool confirmed=false,bool recover=false)
+    public async Task<bool> StartAsync(MonitoringConfiguration config,bool confirmed=false,bool recover=false,CancellationToken cancellation=default)
     {
         // Register a cancellable pending start before any asynchronous wait, including another Stop.
-        var startup=new CancellationTokenSource();long generation;Task pendingStop;
+        var startup=CancellationTokenSource.CreateLinkedTokenSource(cancellation);long generation;Task pendingStop;
         lock(cancellationSync)
         {
             generation=cancellationGeneration;pendingStarts.Add(startup);pendingStop=stopBarrier?.Task??Task.CompletedTask;

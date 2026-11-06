@@ -12,7 +12,7 @@
 - 按需搜索：`chat +search-msg --group=... --query=... --start=... --end=... --order=asc --page-all --page-limit=10 --limit=100 --format=json`。官方 v1.0.67 搜索不接受 `--max-items`，因此使用每页 100 条、最多 10 页。不会在失败后扩大成全部会话检索。
 - 不使用消息发送、已读清理、撤回、升级、auth export/import 或任何密钥读取命令。DWS 可执行文件由用户独立安装；应用不执行在线安装脚本。
 
-程序使用 `ProcessStartInfo.ArgumentList` 和 `UseShellExecute=false`；所有选项单独传递。聊天正文从不作为命令或参数执行。子进程标准错误不会写入应用日志；输出有 4 MiB、5 分钟和取消上限。
+程序使用 `ProcessStartInfo.ArgumentList` 和 `UseShellExecute=false`；所有选项单独传递。聊天正文从不作为命令或参数执行。标准输出有 4 MiB、进程有 5 分钟和取消上限。标准错误仅在内存有界保留最多 16 Ki 字符供结构化分类，超限后继续排空但不采用任何前缀；原文不写日志、状态或界面。固定 v1.0.67 `+chat-messages --format=json` 保留 DualValidate 的 legacy 错误契约：stderr 的 `error.category=api`、`error.code=1`、显式布尔 `retryable=true` 必须与退出码 1 一致，支持相对重试秒数；未知、矛盾、授权、校验、部分业务输出与不支持的提示都不能触发自动重试。
 
 ## 契约与可见范围
 

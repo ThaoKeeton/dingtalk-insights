@@ -232,42 +232,10 @@ public sealed partial class MainWindow:Window
     Func<MessageBatch,string,CancellationToken,Task<ModelResult>> Analyzer(bool demo,string key,ModelSettings model)=>
         demo?(b,t,_)=>Task.FromResult(new ModelResult(Demo.Analyze(b,t),0,0)):
         (b,t,c)=>new OpenAiClient(gate).AnalyzeAsync(key,b,t,model,gate.Issue(ExternalAction.Analyze,OpenAiClient.Fingerprint(b,t,model)),c);
-    async Task StartMonitoringAsync()
-    {
-        if(monitorCancellation is not null)throw new SafetyException("请先停止现有监控。");
-        var scope=Scope(monitoring:true);var model=Model();var isDemo=IsDemo;var useAi=enableAi.IsOn||isDemo;
-        var poll=(int)interval.Value;var days=isDemo?state.RetentionDays:(int)retention.Value;
-        if(poll is <60 or >3600||days is <1 or >365)throw new SafetyException("检查间隔或保留天数无效。");
-        var now=DateTimeOffset.UtcNow;
-        var next=MonitorEngine.NextScope(state,scope,now);
-        if(next.Start<now.AddDays(-days))throw new SafetyException("下一采集窗口早于所选保留期；请明确增加保留天数，或改晚起点并在开始确认中核对放弃的缺口。");
-        var resumeNote="";
-        if(!isDemo&&state.Monitoring is {} previous&&previous.Scope(now).Key==scope.Key)
-        {
-            var priorCursor=MonitorEngine.ResumeCursor(state,previous.Scope(now),now);
-            resumeNote=$"\n上次授权起点：{previous.Start:O}；从覆盖断点恢复的下一起点：{priorCursor:O}。";
-            if(scope.Start>priorCursor)resumeNote+=$"\n你已改晚起点：确认开始将明确放弃此前尚未检查的缺口 [{priorCursor:O}, {scope.Start:O})。";
-        }
-        var backgroundNote=$"\n关闭窗口：{(closeToTray.IsOn?"通知区域图标可用时继续；图标失败保留窗口":"退出应用")}"+
-            (saveRecovery.IsOn?"\n保存重启恢复权限：今后手动打开应用将恢复同一身份、会话、原始起点、来源与凭据版本、模型、预算、间隔和保留期。无需每日重复确认；配置变化必须重新授权。":"\n不保存恢复权限；退出后再次开始需要确认。");
-        var uploadNote=useAi?$"允许今后新增/修订正文上传 OpenAI：{model.Model}，输入/输出单价 {model.InputUsdPerMillion}/{model.OutputUsdPerMillion} USD/百万 tokens，每次最多 {model.MaxOutputTokens} 输出 tokens；每日费用预留 USD {model.DailyBudgetUsd}，请求上限 {model.MaxRequestsPerDay}。":"不上传到模型，仅采集到本机。";
-        if((!isDemo||closeToTray.IsOn)&&!await Confirm("确认持续监控与后台范围",scope.Display+resumeNote+$"\n来源：{(isDemo?"模拟数据":dwsPath.Text.Trim())}\n每 {poll} 秒检查，原文加密保留 {days} 天。\n"+uploadNote+backgroundNote+"\n停止会撤销恢复权限。退出保留单独批准的恢复策略。不会自动发送 Webhook，也不安装开机启动。","授权以上范围并开始"))return;
-        MonitoringConfiguration config;
-        if(isDemo)config=new MonitoringConfiguration("demo",scope.Profile,scope.ConversationId,scope.Start,"","",true,model,poll,days,"");
-        else config=await CurrentConfigurationAsync(ActiveToken)??throw new MonitoringFault(MonitorFailure.Configuration);
-        // Ordinary settings are saved before recovery permission, so a partial settings write cannot broaden a policy.
-        if(!isDemo){state.Monitoring=new MonitoringOrigin(scope.Profile,scope.ConversationId,scope.Start);savedSettings=savedSettings with{CloseToTray=closeToTray.IsOn};await SaveSettingsAsync();}
-        else if(closeToTray.IsOn!=savedSettings.CloseToTray){savedSettings=savedSettings with{CloseToTray=closeToTray.IsOn};}
-        if(saveRecovery.IsOn&&!isDemo)BackgroundPolicy.Approve(state,config,now,confirmed:true);
-        else BackgroundPolicy.Revoke(state);
-        store.Save(state);
-        await BeginSupervisorAsync(config,isDemo,recover:false);
-        StatusText.Text=isDemo?"模拟持续检查已开始；不连接任何服务。":"持续检查已开始，仅限明确确认的后台范围与预算。";
-    }
     void UpdateMonitorControls()
     {
-        var running=monitorCancellation is not null;
-        if(startButton is not null)startButton.IsEnabled=!running;if(stopButton is not null)stopButton.IsEnabled=running||active is not null;
+        var running=monitorCancellation is not null||hostStartup is not null;
+        if(startButton is not null)startButton.IsEnabled=!running&&!exiting;if(stopButton is not null)stopButton.IsEnabled=running||active is not null;
         if(settingsPage is not null)settingsPage.IsEnabled=!running;since.IsEnabled=!running;interval.IsEnabled=!running;enableAi.IsEnabled=!running;closeToTray.IsEnabled=!running;saveRecovery.IsEnabled=!running;
     }
     void SetReport(AnalysisReport report){currentReport=report;displayedSavedReport=null;markdown=ReportRenderer.Markdown(report);displayedDemo=report.Batch.IsDemo;reportBox.Text=markdown;issuePicker.ItemsSource=report.Issues;if(report.Issues.Count>0)issuePicker.SelectedIndex=0;RefreshHistory(clearSelection:true);}

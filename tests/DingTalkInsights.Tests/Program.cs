@@ -2,6 +2,8 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using DingTalkInsights.Core;
 
+if(SyntheticDws.TryRun(args) is {} syntheticExit)return syntheticExit;
+
 var tests = new List<(string Name, Action Test)>();
 var scope = new QueryScope("corp:user", "cid-demo", DateTimeOffset.Parse("2026-11-06T09:00:00+08:00"), DateTimeOffset.Parse("2026-11-06T11:00:00+08:00"));
 string Payload() => """
@@ -50,6 +52,8 @@ Add("补充完整性字段未知类型或真值均不完整",()=>{foreach(var fi
 tests.AddRange(ServiceTests.All());
 tests.AddRange(MonitorTests.All());
 tests.AddRange(BackgroundTests.All());
+tests.AddRange(HostStartupTests.All());
+tests.AddRange(DwsProcessTests.All());
 var failed=0;
 foreach(var (name,test) in tests)try { test();Console.WriteLine("PASS "+name); }catch(Exception e){failed++;Console.WriteLine("FAIL "+name+": "+e.GetType().Name+" "+e.Message);}
 Console.WriteLine($"{tests.Count-failed}/{tests.Count} passed");
