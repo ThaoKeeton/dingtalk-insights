@@ -28,7 +28,7 @@ v0.2 是已登录用户会话内的托盘应用。开始时可分别选择并确
 
 默认低价模型是 `gpt-6-luna`，可修改模型和单价。默认每日费用预留上限 USD 0.50、最多 200 次请求、每次最多 2000 输出 tokens。输入/输出参考价为 USD 0.10/0.50 每百万 tokens，核对日期 2026-11-06，见 [OpenAI 官方模型价目](https://developers.openai.com/api/docs/models/gpt-6-luna)。费用在请求前保守预留，失败或崩溃不返还，避免自动重复扣费；该限制不是 OpenAI 平台账户的全局消费上限，单价需按实际模型核对。
 
-Webhook 每次都预览完整正文和明确的接收群，再确认发送一次。支持官方自定义机器人 HMAC 加签，禁止全员提醒，禁止重定向。超时标记为结果不确定，不会自动重发。
+Webhook 每次都预览完整正文和明确的接收群，再确认发送一次。本维护分支用同目录 DPAPI `send-attempts.dpapi` 保存目标与正文的摘要及发送尝试；中断、重启、清理索引不清除此记录。同一正文与目标默认不重发，人工再次确认也可能重复送达；不承诺端到端恰好一次。支持官方自定义机器人 HMAC 加签，禁止全员提醒，禁止重定向。超时标记为结果不确定，不会自动重发。
 
 ## 本机数据与结果可信度
 
@@ -61,3 +61,11 @@ GitHub Actions 的 [Windows native MVP](.github/workflows/windows.yml) 运行核
 代码和测试均使用合成消息及合成凭据；持续监控、真实 DWS 可见范围、真实模型用量和 Webhook 接收仍需用户在授权本机验收。第三方许可说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 后台策略、实现决策与测试清单见 [v0.2 背景监控设计](docs/background-monitoring.md)。
+
+## Workbench 原生插件适配（开发中）
+
+本分支已提取 .NET 8 `DingTalkInsights.Runtime`，与独立应用共用 Core、DPAPI 格式和规范账本独占锁；初始化/导航不连接真实服务。真实数据仅在明确连接标准独立应用数据目录后使用同一个物理账本，保留费用预留、来源和未知尝试；凭据用途另行确认，不继承恢复授权。停用/退出一律取消并等实际工作退役，重新启用需要明确开始。
+
+回到独立版前先断开/停用插件、等锁释放，再对同一目录核对设置并明确开始。发送尝试侧车能跨旧 v0.2 状态重写保留，但已发布旧二进制自己的手动发送不会查询它；旧版回退期间不要手动发送。维护中的独立版已接入该账本。任意副本目录不能证明与标准旧独立版互斥。
+
+Task 1 是可复用运行时，尚无可安装插件 DLL 或原生宿主验收。后续 Task 2 在独立评审后实现宿主 SDK 适配、页面和包；见 [设计](docs/superpowers/specs/2026-11-06-workbench-plugin-design.md)、[计划](docs/superpowers/plans/2026-11-06-workbench-plugin.md) 与 [当前 SDK 缺口和接线约束](docs/workbench-sdk-requirements.md)。

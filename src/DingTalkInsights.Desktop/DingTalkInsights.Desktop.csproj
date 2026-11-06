@@ -21,6 +21,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../DingTalkInsights.Core/DingTalkInsights.Core.csproj" />
+    <ProjectReference Include="../DingTalkInsights.Runtime/DingTalkInsights.Runtime.csproj" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.6.5" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.9169" />
   </ItemGroup>

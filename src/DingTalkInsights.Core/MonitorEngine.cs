@@ -78,9 +78,17 @@ public sealed class MonitorEngine(InsightState state,IStateStore store)
         catch(OperationCanceledException)when(cancellation.IsCancellationRequested){throw;}
         catch(MonitoringFault e)when(e.Category is MonitorFailure.Configuration or MonitorFailure.Storage or MonitorFailure.Retention){throw;}
         catch(Exception e){throw new ModelAttemptFailure(e is MonitoringFault{Category:MonitorFailure.ModelAuthorization}?MonitorFailure.ModelAuthorization:MonitorFailure.ModelUnknown);}
+        var previousReports=state.Reports;var previousInput=state.InputTokens;var previousOutput=state.OutputTokens;
         state.InputTokens+=result.InputTokens;state.OutputTokens+=result.OutputTokens;
-        state.Reports.Add(new SavedReport(now,batch.Scope.Key,task,ReportRenderer.Markdown(result.Report),batch.IsDemo,batch.Messages.Min(m=>m.CreatedAt)));
-        state.Reports=state.Reports.TakeLast(100).ToList();Save();return result;
+        state.Reports=previousReports.Append(new SavedReport(now,batch.Scope.Key,task,ReportRenderer.Markdown(result.Report),batch.IsDemo,batch.Messages.Min(m=>m.CreatedAt))).TakeLast(100).ToList();
+        try{Save();}
+        catch
+        {
+            // A failed final commit must not surface an undurable history entry or resurrect it on Stop.
+            // The pre-HTTP attempt and budget reservation deliberately remain committed.
+            state.Reports=previousReports;state.InputTokens=previousInput;state.OutputTokens=previousOutput;throw;
+        }
+        return result;
     }
     void Save(){try{store.Save(state);}catch(Exception){throw new MonitoringFault(MonitorFailure.Storage);}}
     sealed class ModelAttemptFailure(MonitorFailure category):SafetyException(MonitorNotices.For(category)){public MonitorFailure Category{get;}=category;}

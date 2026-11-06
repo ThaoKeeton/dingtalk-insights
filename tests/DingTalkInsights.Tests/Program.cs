@@ -49,6 +49,8 @@ Add("未知或缺失终止原因不能推进断点",()=>{foreach(var value in ne
 Add("缺失或错误范围元数据不能推进断点",()=>{foreach(var field in new[]{"startTime","endTime","order","semantics"}){var n=JsonNode.Parse(Payload())!;n["data"]!["queryRange"]![field]="unknown";True(!DwsParser.ParseMessages(n.ToJsonString(),scope).Complete);}True(!DwsParser.ParseMessages(Change("queryRange",null),scope).Complete);});
 Add("补充完整性字段未知类型或真值均不完整",()=>{foreach(var field in new[]{"truncatedByPageLimit","truncatedByResultLimit"})foreach(var value in new JsonNode?[]{null,JsonValue.Create("false"),JsonValue.Create(true)})True(!DwsParser.ParseMessages(Change(field,value),scope).Complete);});
 
+tests.AddRange(DeliveryTests.All());
+tests.AddRange(RuntimeTests.All());
 tests.AddRange(ServiceTests.All());
 tests.AddRange(MonitorTests.All());
 tests.AddRange(BackgroundTests.All());
