@@ -12,10 +12,16 @@ public sealed record QueryScope(string Profile, string ConversationId, DateTimeO
 {
     public void Validate()
     {
+        ValidateOrigin();
+        if (End - Start > TimeSpan.FromDays(31))
+            throw new SafetyException("身份或时间范围无效；每次查询最多 31 天，结束时间不包含在范围中。");
+    }
+    // A saved monitoring origin is not a single request: only each fetch has the 31-day query bound.
+    public void ValidateOrigin()
+    {
         Guard.Identifier(Profile, "请选择明确的 DWS 身份（corpId:userId）。");
         Guard.Identifier(ConversationId, "请选择明确的会话 ID。");
-        if (!Profile.Contains(':') || End <= Start || End - Start > TimeSpan.FromDays(31))
-            throw new SafetyException("身份或时间范围无效；每次查询最多 31 天，结束时间不包含在范围中。");
+        if(!Profile.Contains(':')||End<=Start)throw new SafetyException("监控身份或开始时间无效。");
     }
     [JsonIgnore] public string Key => Guard.Hash(Profile + "\n" + ConversationId);
     [JsonIgnore] public string Fingerprint => Guard.Hash(JsonSerializer.Serialize(this));

@@ -36,10 +36,11 @@ public sealed class WebhookClient(ConsentGate consent,HttpClient? http=null)
         try
         {
             var payload=JsonSerializer.Serialize(new{msgtype="markdown",markdown=new{title="钉钉信息整理 · 待核实",text},at=new{isAtAll=false}});
+            using var deadline=HttpSafety.Deadline(http,cancellation);
             using var request=new HttpRequestMessage(HttpMethod.Post,url){Content=new StringContent(payload,Encoding.UTF8,"application/json")};
-            using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,cancellation);
+            using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,deadline.Token);
             if(!response.IsSuccessStatusCode)return DeliveryStatus.Failed;
-            using var doc=JsonDocument.Parse(await HttpSafety.ReadAsync(response,8192,cancellation));
+            using var doc=JsonDocument.Parse(await HttpSafety.ReadAsync(response,8192,deadline.Token));
             return doc.RootElement.TryGetProperty("errcode",out var code)&&code.TryGetInt32(out var value)&&value==0?DeliveryStatus.Sent:DeliveryStatus.Failed;
         }
         catch(Exception e)when(e is OperationCanceledException or HttpRequestException or JsonException or SafetyException){return DeliveryStatus.Unknown;}

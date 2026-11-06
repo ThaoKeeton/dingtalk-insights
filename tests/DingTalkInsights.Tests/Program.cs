@@ -5,7 +5,7 @@ using DingTalkInsights.Core;
 var tests = new List<(string Name, Action Test)>();
 var scope = new QueryScope("corp:user", "cid-demo", DateTimeOffset.Parse("2026-11-06T09:00:00+08:00"), DateTimeOffset.Parse("2026-11-06T11:00:00+08:00"));
 string Payload() => """
-{"ok":true,"outcome":"success","data":{"contractVersion":"im.message-list.v1","messages":[{"messageId":"m1","conversationId":"cid-demo","senderId":"u1","sender":"测试甲","text":"登录失败，提示超时。","createTime":"2026-11-06 09:10:00","messageType":"text"},{"messageId":"m2","conversationId":"cid-demo","senderId":"u2","sender":"测试乙","text":"修复已提交，请复测。","createTime":"2026-11-06T09:30:00+08:00","messageType":"text"}],"count":2,"complete":true,"paginationKnown":true,"hasMore":false,"pagesFetched":1,"failedCount":0,"failures":[],"partial":false,"truncated":false,"stopReason":"source_complete"}}
+{"ok":true,"outcome":"success","data":{"contractVersion":"im.message-list.v1","messages":[{"messageId":"m1","conversationId":"cid-demo","senderId":"u1","sender":"测试甲","text":"登录失败，提示超时。","createTime":"2026-11-06 09:10:00","messageType":"text"},{"messageId":"m2","conversationId":"cid-demo","senderId":"u2","sender":"测试乙","text":"修复已提交，请复测。","createTime":"2026-11-06T09:30:00+08:00","messageType":"text"}],"count":2,"complete":true,"paginationKnown":true,"hasMore":false,"pagesFetched":1,"failedCount":0,"failures":[],"partial":false,"truncated":false,"stopReason":"source_complete","queryRange":{"startTime":"2026-11-06T09:00:00+08:00","endTime":"2026-11-06T11:00:00+08:00","order":"asc","semantics":"[start,end)"}}}
 """;
 string Change(string key, JsonNode? value) { var n = JsonNode.Parse(Payload())!; n["data"]![key] = value; return n.ToJsonString(); }
 MessageBatch Batch() => DwsParser.ParseMessages(Payload(), scope);
@@ -38,6 +38,14 @@ Add("人工确认仅在复核证据后生效", () => {var r=AnalysisValidator.Va
 Add("缺证据和未知状态被拒绝", () => {var n=JsonNode.Parse(Analysis())!;n["issues"]![0]!["evidence"]=new JsonArray();Throws(()=>AnalysisValidator.Validate(n.ToJsonString(),Batch()));Throws(()=>AnalysisValidator.Validate(Analysis(status:"whatever"),Batch()));});
 Add("Markdown 包含来源与不完整提示且不生成活动链接", () => {var b=DwsParser.ParseMessages(Change("complete",JsonValue.Create(false)),scope);var r=AnalysisValidator.Validate(Analysis(),b);var md=ReportRenderer.Markdown(r);True(md.Contains("m2")&&md.Contains("不完整")&&!md.Contains("](http"));});
 Add("模拟报告不将修复提交当作已解决", () => {var r=Demo.CreateReport();True(r.Batch.IsDemo && r.Issues.All(i=>i.Status!=IssueStatus.Resolved));});
+Add("矛盾终止原因不能推进完整断点",()=>True(!DwsParser.ParseMessages(Change("stopReason",JsonValue.Create("page_limit")),scope).Complete));
+Add("已存在的截断字段必须为正确布尔类型",()=>True(!DwsParser.ParseMessages(Change("truncatedByPageLimit",JsonValue.Create("false")),scope).Complete));
+Add("空结果的返回时间范围不匹配时仍属不完整",()=>{var n=JsonNode.Parse(Payload())!;n["data"]!["messages"]=new JsonArray();n["data"]!["count"]=0;n["data"]!["queryRange"]=JsonSerializer.SerializeToNode(new{startTime=scope.Start.AddHours(1),endTime=scope.End,order="asc",semantics="[start,end)"});True(!DwsParser.ParseMessages(n.ToJsonString(),scope).Complete);});
+
+Add("官方升序范围终止原因允许完整",()=>True(DwsParser.ParseMessages(Change("stopReason",JsonValue.Create("range_end")),scope).Complete));
+Add("未知或缺失终止原因不能推进断点",()=>{foreach(var value in new JsonNode?[]{null,JsonValue.Create("future_reason"),JsonValue.Create("range_start")})True(!DwsParser.ParseMessages(Change("stopReason",value),scope).Complete);});
+Add("缺失或错误范围元数据不能推进断点",()=>{foreach(var field in new[]{"startTime","endTime","order","semantics"}){var n=JsonNode.Parse(Payload())!;n["data"]!["queryRange"]![field]="unknown";True(!DwsParser.ParseMessages(n.ToJsonString(),scope).Complete);}True(!DwsParser.ParseMessages(Change("queryRange",null),scope).Complete);});
+Add("补充完整性字段未知类型或真值均不完整",()=>{foreach(var field in new[]{"truncatedByPageLimit","truncatedByResultLimit"})foreach(var value in new JsonNode?[]{null,JsonValue.Create("false"),JsonValue.Create(true)})True(!DwsParser.ParseMessages(Change(field,value),scope).Complete);});
 
 tests.AddRange(ServiceTests.All());
 tests.AddRange(MonitorTests.All());

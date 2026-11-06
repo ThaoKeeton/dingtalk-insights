@@ -6,13 +6,17 @@ public sealed class MonitorEngine(InsightState state,IStateStore store)
 {
     readonly SemaphoreSlim semaphore=new(1,1);
     public InsightState State=>state;
-    public static QueryScope NextScope(InsightState state,QueryScope initial,DateTimeOffset now)
+    public static DateTimeOffset ResumeCursor(InsightState state,QueryScope initial,DateTimeOffset now)
     {
-        initial.Validate();var cursor=initial.Start;
+        initial.ValidateOrigin();var cursor=initial.Start;
         if(now<=initial.Start)throw new SafetyException("监控开始时间尚未到达。");
         foreach(var range in state.Coverage.GetValueOrDefault(initial.Key,[]).OrderBy(r=>r.Start))
         {if(range.Start>cursor)break;if(range.End>cursor)cursor=range.End;}
-        if(cursor>now)cursor=now;
+        return cursor>now?now:cursor;
+    }
+    public static QueryScope NextScope(InsightState state,QueryScope initial,DateTimeOffset now)
+    {
+        var cursor=ResumeCursor(state,initial,now);
         var start=cursor==initial.Start?cursor:cursor.AddMinutes(-2);
         if(start<initial.Start)start=initial.Start;
         var end=cursor.AddHours(1)<now?cursor.AddHours(1):now;
@@ -25,7 +29,7 @@ public sealed class MonitorEngine(InsightState state,IStateStore store)
         try
         {
             state.Trim(now,retentionDays);
-            var scope=NextScope(state,initial,now);var batch=await fetch(scope,cancellation);
+            var scope=NextScope(state,initial,now);state.EnsureScopeRetained(scope);var batch=await fetch(scope,cancellation);
             if(batch.Scope!=scope)throw new SafetyException("读取结果与授权范围不一致。");
             var changed=state.Ingest(batch);store.Save(state);
             AnalysisReport? report=null;
@@ -46,7 +50,7 @@ public sealed class MonitorEngine(InsightState state,IStateStore store)
         Func<MessageBatch,string,CancellationToken,Task<ModelResult>> analyze,DateTimeOffset now,CancellationToken cancellation=default)
     {
         await semaphore.WaitAsync(cancellation);
-        try{return await AnalyzeLocked(batch,task,model,analyze,now,cancellation);}
+        try{state.Trim(now,state.RetentionDays);state.EnsureRetained(batch);return await AnalyzeLocked(batch,task,model,analyze,now,cancellation);}
         finally{semaphore.Release();}
     }
     private async Task<ModelResult> AnalyzeLocked(MessageBatch batch,string task,ModelSettings model,
@@ -57,18 +61,20 @@ public sealed class MonitorEngine(InsightState state,IStateStore store)
         state.MarkAttempted(batch.Scope,batch.Messages);
         // Commit the reservation and attempt BEFORE HTTP: a crash must not release them.
         store.Save(state);
+        state.EnsureRetained(batch);
         var result=await analyze(batch,task,cancellation);
         if(result.Report.Batch.Fingerprint!=batch.Fingerprint)throw new SafetyException("整理结果不属于本批消息。");
         state.InputTokens+=result.InputTokens;state.OutputTokens+=result.OutputTokens;
-        state.Reports.Add(new SavedReport(now,batch.Scope.Key,task,ReportRenderer.Markdown(result.Report),batch.IsDemo));
+        state.Reports.Add(new SavedReport(now,batch.Scope.Key,task,ReportRenderer.Markdown(result.Report),batch.IsDemo,batch.Messages.Min(m=>m.CreatedAt)));
         state.Reports=state.Reports.TakeLast(100).ToList();store.Save(state);return result;
     }
 }
 
 public static class LocalSearch
 {
-    public static MessageBatch Find(InsightState state,QueryScope scope,string keywords)
+    public static MessageBatch Find(InsightState state,QueryScope scope,string keywords,DateTimeOffset? now=null)
     {
+        state.Trim(now??DateTimeOffset.UtcNow,state.RetentionDays);
         scope.Validate();Guard.Identifier(keywords,"请输入搜索词。");
         var terms=keywords.Split([',','，',';','；',' ','\n'],StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries);
         if(terms.Length is <1 or >8)throw new SafetyException("每次可检索 1–8 个关键词。");

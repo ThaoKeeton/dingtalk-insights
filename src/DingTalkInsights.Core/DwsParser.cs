@@ -23,7 +23,11 @@ public static class DwsParser
             var warnings = new List<string>();
             var complete = Guard.True(data, "complete") && Guard.True(data, "paginationKnown") && Guard.False(data, "hasMore")
                 && Guard.False(data, "partial") && Guard.False(data, "truncated") && exitCode == 0
-                && !Guard.True(data,"truncatedByPageLimit") && !Guard.True(data,"truncatedByResultLimit");
+                && AbsentOrFalse(data,"truncatedByPageLimit") && AbsentOrFalse(data,"truncatedByResultLimit")
+                && RangeMatches(data,scope) && Guard.Optional(data,"stopReason") is ("source_complete" or "range_end");
+            if (!data.TryGetProperty("pagesFetched",out var pages) || pages.ValueKind!=JsonValueKind.Number || !pages.TryGetInt32(out var pageCount) || pageCount<1) complete=false;
+            if (data.TryGetProperty("nextPage",out var next) && next.ValueKind!=JsonValueKind.Null) complete=false;
+            if (doc.RootElement.TryGetProperty("ok",out var ok) && ok.ValueKind!=JsonValueKind.True) complete=false;
             if (!data.TryGetProperty("failures", out var failures) || failures.ValueKind != JsonValueKind.Array || failures.GetArrayLength() > 0) complete = false;
             if (!data.TryGetProperty("failedCount", out var fc) || !fc.TryGetInt32(out var count) || count != 0) complete = false;
             if (Guard.Optional(doc.RootElement,"outcome") is "partial_failure" or "pending") complete = false;
@@ -63,6 +67,21 @@ public static class DwsParser
         catch (Exception e) when (e is JsonException or InvalidOperationException or KeyNotFoundException or FormatException)
         { throw new SafetyException("DWS 数据格式无效；未采用不明数据。"); }
     }
+
+    // v1.0.67 message_time_range.go emits [start,end), RFC3339Nano times and asc/range_end.
+    // Our fixed read command always requests both bounds and asc; empty rows still need matching metadata.
+    static bool RangeMatches(JsonElement data,QueryScope scope)
+    {
+        if(!data.TryGetProperty("queryRange",out var range)||range.ValueKind!=JsonValueKind.Object
+            ||Guard.Optional(range,"order")!="asc"||Guard.Optional(range,"semantics")!="[start,end)"
+            ||!range.TryGetProperty("startTime",out var start)||!range.TryGetProperty("endTime",out var end))return false;
+        if(start.ValueKind!=JsonValueKind.String||end.ValueKind!=JsonValueKind.String
+            ||!System.Text.RegularExpressions.Regex.IsMatch(start.GetString()!,@"(Z|[+-]\d\d:\d\d)$")
+            ||!System.Text.RegularExpressions.Regex.IsMatch(end.GetString()!,@"(Z|[+-]\d\d:\d\d)$"))return false;
+        try{return Guard.Time(start)==scope.Start&&Guard.Time(end)==scope.End;}
+        catch(SafetyException){return false;}
+    }
+    static bool AbsentOrFalse(JsonElement data,string field)=>!data.TryGetProperty(field,out var value)||value.ValueKind==JsonValueKind.False;
 
     public static IReadOnlyList<Conversation> ParseConversations(string json, int exitCode = 0)
     {

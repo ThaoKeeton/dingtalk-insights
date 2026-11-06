@@ -20,11 +20,20 @@ internal static class ServiceTests
         yield return ("Webhook 发送包括签名且禁止全员提醒",()=>{string? url=null,body=null;var h=new Handler(r=>{url=r.RequestUri!.ToString();body=r.Content!.ReadAsStringAsync().Result;return Response("{\"errcode\":0,\"errmsg\":\"ok\"}");});var g=new ConsentGate();var c=new WebhookClient(g,new HttpClient(h));var target=new WebhookTarget("测试群","https://oapi.dingtalk.com/robot/send?access_token=synthetic","SYNTHETIC_SIGNING_SECRET");var content="测试内容";var r=c.SendAsync(target,content,g.Issue(ExternalAction.Send,WebhookClient.Fingerprint(target,content))).GetAwaiter().GetResult();Assert(r==DeliveryStatus.Sent&&url!.Contains("timestamp=")&&url.Contains("sign=")&&body!.Contains("\"isAtAll\":false"));});
         yield return ("Webhook 超时视为不确定且不重试",()=>{var h=new Handler(_=>throw new TaskCanceledException());var g=new ConsentGate();var c=new WebhookClient(g,new HttpClient(h));var t=new WebhookTarget("测试群","https://oapi.dingtalk.com/robot/send?access_token=synthetic","");var r=c.SendAsync(t,"内容",g.Issue(ExternalAction.Send,WebhookClient.Fingerprint(t,"内容"))).GetAwaiter().GetResult();Assert(r==DeliveryStatus.Unknown&&h.Calls==1);});
         yield return ("DWS 命令绑定单一身份、会话、范围且无 shell",()=>{var s=Demo.CreateBatch().Scope;var a=DwsClient.MessageArguments(s);Assert(a.Contains("--profile="+s.Profile)&&a.Contains("--conversation-id="+s.ConversationId)&&a.Contains("--page-all")&&!a.Any(x=>x.StartsWith("--yes")));});
+        yield return ("OpenAI 响应头已返回但正文停滞仍按期限结束",()=>{var h=new Handler(_=>new HttpResponseMessage(HttpStatusCode.OK){Content=new StreamContent(new SlowStream())});var http=new HttpClient(h){Timeout=TimeSpan.FromMilliseconds(60)};var b=Demo.CreateBatch();var m=new ModelSettings();var g=new ConsentGate();var watch=System.Diagnostics.Stopwatch.StartNew();Denied(()=>new OpenAiClient(g,http).AnalyzeAsync("SYNTHETIC",b,"task",m,g.Issue(ExternalAction.Analyze,OpenAiClient.Fingerprint(b,"task",m))).GetAwaiter().GetResult());Assert(watch.Elapsed<TimeSpan.FromSeconds(1)&&h.Calls==1);});
+        yield return ("Webhook 正文停滞按期限返回不确定且不重发",()=>{var h=new Handler(_=>new HttpResponseMessage(HttpStatusCode.OK){Content=new StreamContent(new SlowStream())});var http=new HttpClient(h){Timeout=TimeSpan.FromMilliseconds(60)};var g=new ConsentGate();var t=new WebhookTarget("测试群","https://oapi.dingtalk.com/robot/send?access_token=synthetic","");var watch=System.Diagnostics.Stopwatch.StartNew();var r=new WebhookClient(g,http).SendAsync(t,"内容",g.Issue(ExternalAction.Send,WebhookClient.Fingerprint(t,"内容"))).GetAwaiter().GetResult();Assert(r==DeliveryStatus.Unknown&&watch.Elapsed<TimeSpan.FromSeconds(1)&&h.Calls==1);});
     }
     internal static HttpResponseMessage Response(string body)=>new(HttpStatusCode.OK){Content=new StringContent(body,Encoding.UTF8,"application/json")};
     sealed class Handler(Func<HttpRequestMessage,HttpResponseMessage> callback):HttpMessageHandler
     {
         public int Calls {get;private set;}
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token){Calls++;return Task.FromResult(callback(request));}
+    }
+    sealed class SlowStream:Stream
+    {
+        public override bool CanRead=>true;public override bool CanSeek=>false;public override bool CanWrite=>false;
+        public override long Length=>throw new NotSupportedException();public override long Position{get=>throw new NotSupportedException();set=>throw new NotSupportedException();}
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer,CancellationToken cancellationToken=default){await Task.Delay(2000,cancellationToken);return 0;}
+        public override int Read(byte[] buffer,int offset,int count)=>throw new NotSupportedException();public override void Flush(){}public override long Seek(long offset,SeekOrigin origin)=>throw new NotSupportedException();public override void SetLength(long value)=>throw new NotSupportedException();public override void Write(byte[] buffer,int offset,int count)=>throw new NotSupportedException();
     }
 }

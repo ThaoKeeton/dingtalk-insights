@@ -4,15 +4,17 @@ namespace DingTalkInsights.Core;
 
 public static class Demo
 {
-    public static MessageBatch CreateBatch()
+    public static MessageBatch CreateBatch(DateTimeOffset? reference=null)
     {
-        var start=DateTimeOffset.Parse("2026-11-06T09:00:00+08:00");
+        // Use the previous complete UTC+8 day, captured once by the caller for a stable app session.
+        var day=(reference??DateTimeOffset.UtcNow).ToOffset(TimeSpan.FromHours(8)).Date.AddDays(-1);
+        var start=new DateTimeOffset(day.AddHours(9),TimeSpan.FromHours(8));
         var scope=new QueryScope("demo:local","demo-project",start,start.AddHours(3));
         var data=new {contractVersion="im.message-list.v1",messages=new[]{
             new{messageId="demo-1",conversationId=scope.ConversationId,senderId="demo-a",sender="模拟测试甲",text="登录偶发超时，发布前需要确认原因。",createTime=start.AddMinutes(10),messageType="text"},
             new{messageId="demo-2",conversationId=scope.ConversationId,senderId="demo-b",sender="模拟开发乙",text="修复已提交，请在测试环境复测，还没有生产验证。",createTime=start.AddMinutes(25),messageType="text"},
             new{messageId="demo-3",conversationId=scope.ConversationId,senderId="demo-c",sender="模拟产品丙",text="接口中的完成状态是提交完成还是验收通过？目前两边理解不一致。",createTime=start.AddMinutes(40),messageType="text"},
-            new{messageId="demo-4",conversationId=scope.ConversationId,senderId="demo-a",sender="模拟测试甲",text="我负责复测登录，验收口径请产品确认，预计今天下午反馈。",createTime=start.AddMinutes(50),messageType="text"}},count=4,complete=true,paginationKnown=true,hasMore=false,pagesFetched=1,failedCount=0,failures=Array.Empty<object>(),partial=false,truncated=false,stopReason="source_complete"};
+            new{messageId="demo-4",conversationId=scope.ConversationId,senderId="demo-a",sender="模拟测试甲",text="我负责复测登录，验收口径请产品确认，预计今天下午反馈。",createTime=start.AddMinutes(50),messageType="text"}},count=4,complete=true,paginationKnown=true,hasMore=false,pagesFetched=1,failedCount=0,failures=Array.Empty<object>(),partial=false,truncated=false,stopReason="source_complete",queryRange=new{startTime=scope.Start,endTime=scope.End,order="asc",semantics="[start,end)"}};
         return DwsParser.ParseMessages(JsonSerializer.Serialize(new{ok=true,outcome="success",data}),scope) with{IsDemo=true};
     }
     public static AnalysisReport CreateReport()=>Analyze(CreateBatch());

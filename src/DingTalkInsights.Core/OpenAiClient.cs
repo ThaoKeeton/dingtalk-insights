@@ -55,11 +55,12 @@ public sealed class OpenAiClient(ConsentGate consent,HttpClient? http=null)
         if(string.IsNullOrWhiteSpace(key))throw new SafetyException("尚未配置本应用的 OpenAI 密钥。");
         try
         {
+            using var deadline=HttpSafety.Deadline(http,cancellation);
             using var request=new HttpRequestMessage(HttpMethod.Post,Endpoint){Content=new StringContent(body,Encoding.UTF8,"application/json")};
             request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",key);
-            using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,cancellation);
+            using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,deadline.Token);
             if(!response.IsSuccessStatusCode)throw new SafetyException($"OpenAI 返回 HTTP {(int)response.StatusCode}；未展示服务响应内容，也未自动重试。");
-            var json=await HttpSafety.ReadAsync(response,512*1024,cancellation);
+            var json=await HttpSafety.ReadAsync(response,512*1024,deadline.Token);
             using var doc=JsonDocument.Parse(json);var root=doc.RootElement;
             if(Guard.Optional(root,"status")!="completed")throw new SafetyException("模型响应未完成，未采用整理结果。");
             var output=root.GetProperty("output");var texts=new List<string>();

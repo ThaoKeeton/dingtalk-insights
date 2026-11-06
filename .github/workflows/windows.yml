@@ -41,6 +41,12 @@ jobs:
           if ($process.ExitCode -ne 0) { throw "Native UI smoke failed: $($process.ExitCode)" }
           $result = Get-Content dist/app/smoke-output/smoke-result.json | ConvertFrom-Json
           if (-not $result.success -or $result.steps.Count -lt 12) { throw 'Incomplete native UI evidence' }
+          $restart = Start-Process "$PWD/dist/app/DingTalkInsights.exe" -ArgumentList '--smoke-test','--smoke-restore' -PassThru
+          if (-not $restart.WaitForExit(90000)) { Stop-Process -Id $restart.Id -Force; throw 'Native restart smoke timed out' }
+          if (Test-Path dist/app/smoke-output/restart-smoke-result.json) { Get-Content dist/app/smoke-output/restart-smoke-result.json }
+          if ($restart.ExitCode -ne 0) { throw 'Native restart smoke failed' }
+          $restored = Get-Content dist/app/smoke-output/restart-smoke-result.json | ConvertFrom-Json
+          if (-not $restored.success -or $restored.steps.Count -lt 8) { throw 'Incomplete native restart evidence' }
           Copy-Item dist/app/smoke-output dist/ui-evidence -Recurse
           Remove-Item dist/ui-evidence/isolated-data -Recurse -Force
           Remove-Item dist/app/smoke-output -Recurse -Force
@@ -59,6 +65,12 @@ jobs:
           if (-not $process.WaitForExit(90000)) { Stop-Process -Id $process.Id -Force; throw 'Extracted native UI smoke timed out' }
           if ($process.ExitCode -ne 0) { throw 'Extracted application failed native smoke' }
           Copy-Item dist/extracted/smoke-output/smoke-result.json dist/ui-evidence/extracted-smoke-result.json
+          $restart = Start-Process "$PWD/dist/extracted/DingTalkInsights.exe" -ArgumentList '--smoke-test','--smoke-restore' -PassThru
+          if (-not $restart.WaitForExit(90000)) { Stop-Process -Id $restart.Id -Force; throw 'Extracted restart smoke timed out' }
+          if ($restart.ExitCode -ne 0) { throw 'Extracted application failed restart smoke' }
+          $restored = Get-Content dist/extracted/smoke-output/restart-smoke-result.json | ConvertFrom-Json
+          if (-not $restored.success) { throw 'Extracted restart evidence failed' }
+          Copy-Item dist/extracted/smoke-output/restart-smoke-result.json dist/ui-evidence/extracted-restart-smoke-result.json
       - uses: actions/upload-artifact@v4
         if: success()
         with:

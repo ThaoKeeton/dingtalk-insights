@@ -53,6 +53,7 @@ internal sealed record UserSettings
     public string DwsPath{get;init;}="";
     public string Profile{get;init;}="";
     public string ConversationId{get;init;}="";
+    public DateTimeOffset? MonitoringStart{get;init;}
     public string WebhookName{get;init;}="";
     public string Theme{get;init;}="system";
     public ModelSettings Model{get;init;}=new();

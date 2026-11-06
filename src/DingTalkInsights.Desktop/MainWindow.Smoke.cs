@@ -21,6 +21,22 @@ public sealed partial class MainWindow
             await Task.Delay(500);Root.UpdateLayout();
             Check(Root.IsLoaded&&Root.ActualWidth>600,"native-window-loaded");
             Check(IsDemo&&monitorCancellation is null,"safe-default-no-monitor");
+            if(Environment.GetCommandLineArgs().Contains("--smoke-restore"))
+            {
+                Check(history.Items.Count>0&&currentReport is null&&markdown.Contains("demo-2"),"restart-history-ready-without-model");
+                Check(!state.Messages.Values.Any(m=>m.Message.MessageId=="expired-smoke-message")&&!state.Reports.Any(r=>r.Task=="EXPIRED_SMOKE_REPORT"),"restart-retention-before-use");
+                Check(state.Receipts.Any(r=>!r.Complete&&r.Ledger.ContainsKey("syntheticLimit"))&&!monitorSummary.Text.Contains("SYNTHETIC_LIMIT"),"restart-collection-limitations-safe-summary");
+                File.WriteAllText(Path.Combine(output,"restored-report.md"),markdown);
+                Check(File.ReadAllText(Path.Combine(output,"restored-report.md")).Contains("demo-2"),"restart-saved-report-export");
+                Navigate("settings");source.SelectedIndex=1;
+                var origin=state.Monitoring??throw new SafetyException("Missing synthetic monitoring origin.");
+                Check(profile.Text=="smoke:identity"&&conversation.Text=="smoke-conversation"&&ParseTime(since.Text)==origin.Start&&origin.Start<DateTimeOffset.UtcNow.AddDays(-59),"restart-authorized-identity-conversation-origin");
+                var next=MonitorEngine.NextScope(state,Scope(monitoring:true),DateTimeOffset.UtcNow);
+                Check(next.Start==origin.Start&&next.End-next.Start==TimeSpan.FromHours(1)&&monitorCancellation is null,"restart-bounded-gap-no-auto-monitor");
+                source.SelectedIndex=0;
+                File.WriteAllText(Path.Combine(output,"restart-smoke-result.json"),JsonSerializer.Serialize(new{success=true,steps,source="synthetic-only"},new JsonSerializerOptions{WriteIndented=true}));
+                Application.Current.Exit();return;
+            }
             await CaptureAsync("monitor.png");
             await InvokeAsync("read-once");
             Check(candidateBox.Text.Contains("demo-2")&&candidateBox.IsLoaded,"native-read-preview");
@@ -37,19 +53,44 @@ public sealed partial class MainWindow
             Navigate("ask");await Task.Delay(100);await InvokeAsync("search-local");Check(candidates?.Messages.Count==2,"native-local-search");
             Navigate("monitor");await Task.Delay(100);await InvokeAsync("start-monitor");await Task.Delay(500);
             Check(monitorCancellation is not null,"native-monitor-start");
+            Navigate("settings");await Task.Delay(100);
+            Check(settingsPage is {IsEnabled:false}&&!new TextBoxAutomationPeer(profile).IsEnabled(),"native-monitor-disables-settings-keyboard");
+            Navigate("ask");var oldKeywords=keywords.Text;keywords.Text="";
+            await InvokeAsync("search-local");keywords.Text=oldKeywords;
+            Check(monitorCancellation is {IsCancellationRequested:false},"native-manual-validation-keeps-monitor");
+            await Run(()=>throw new InvalidOperationException("synthetic manual failure"));
+            Check(monitorCancellation is {IsCancellationRequested:false},"native-manual-error-keeps-monitor");
+            await Run(()=>throw new SafetyException("synthetic tick failure"),quiet:true,monitorTick:true);
+            if(monitorTask is not null)await monitorTask;
+            Check(monitorCancellation is null,"native-tick-error-pauses-monitor");
+            Navigate("monitor");await InvokeAsync("start-monitor");
             if(stopButton is not null)Invoke(stopButton);
             if(monitorTask is not null)await monitorTask;
             Check(monitorCancellation is null&&state.Messages.Count==4,"native-monitor-stop-dedup");
             Navigate("settings");theme.SelectedIndex=1;Root.RequestedTheme=ElementTheme.Light;await Task.Delay(100);await CaptureAsync("settings-light.png");
             theme.SelectedIndex=2;Root.RequestedTheme=ElementTheme.Dark;await Task.Delay(100);await CaptureAsync("settings-dark.png");
             Check(Root.ActualTheme==ElementTheme.Dark,"native-theme-switch");
-            Navigate("help");await Task.Delay(100);Check(PageHost.Content==pages["help"],"native-help-navigation");
-            File.WriteAllText(Path.Combine(output,"smoke-result.json"),JsonSerializer.Serialize(new{success=true,steps,source="synthetic-only",httpRequests=0},new JsonSerializerOptions{WriteIndented=true}));
+            Navigate("help");await Task.Delay(100);Check(ReferenceEquals(PageHost.Content,pages["help"]),"native-help-navigation");
+            // Seed only this isolated synthetic directory for a separate process to verify startup restoration.
+            Navigate("settings");retention.Value=90;source.SelectedIndex=1;
+            profile.Text="smoke:identity";conversation.Text="smoke-conversation";since.Text=DateTimeOffset.UtcNow.AddDays(-60).ToString("O");
+            state.Monitoring=new MonitoringOrigin(profile.Text,conversation.Text,ParseTime(since.Text));await SaveSettingsAsync();
+            source.SelectedIndex=0;await SaveSettingsAsync();
+            Check(savedSettings.Profile=="smoke:identity"&&savedSettings.ConversationId=="smoke-conversation","demo-save-preserves-real-connection");
+            state.Ingest(demoBatch with{Complete=false,Messages=Array.Empty<SourceMessage>(),Ledger=new Dictionary<string,JsonElement>{{"syntheticLimit",JsonSerializer.SerializeToElement("SYNTHETIC_LIMIT")}}});store.Save(state);
+            var seed=store.Load();var expired=demoBatch.Messages[0]with{MessageId="expired-smoke-message",CreatedAt=DateTimeOffset.UtcNow.AddDays(-400)};
+            seed.Messages[InsightState.MessageKey(demoBatch.Scope,expired)]=new StoredMessage(demoBatch.Scope.Profile,expired);
+            seed.Reports.Add(new SavedReport(DateTimeOffset.UtcNow,demoBatch.Scope.Key,"EXPIRED_SMOKE_REPORT","expired synthetic quote",true,expired.CreatedAt));
+            var seedBytes=JsonSerializer.SerializeToUtf8Bytes(seed);
+            try{File.WriteAllBytes(Path.Combine(dataRoot,"state.dpapi"),new DpapiCipher().Protect(seedBytes));}
+            finally{System.Security.Cryptography.CryptographicOperations.ZeroMemory(seedBytes);}
+            Check(IsDemo&&monitorCancellation is null,"restart-fixture-isolated-demo-default");
+            File.WriteAllText(Path.Combine(output,"smoke-result.json"),JsonSerializer.Serialize(new{success=true,steps,source="synthetic-only"},new JsonSerializerOptions{WriteIndented=true}));
             Environment.ExitCode=0;Application.Current.Exit();
         }
         catch(Exception e)
         {
-            File.WriteAllText(Path.Combine(output,"smoke-result.json"),JsonSerializer.Serialize(new{success=false,steps,error=e.GetType().Name,message=e.Message}));
+            File.WriteAllText(Path.Combine(output,Environment.GetCommandLineArgs().Contains("--smoke-restore")?"restart-smoke-result.json":"smoke-result.json"),JsonSerializer.Serialize(new{success=false,steps,error=e.GetType().Name,message=e.Message}));
             Environment.Exit(1);
         }
         void Check(bool success,string step){if(!success)throw new SafetyException("Smoke check failed: "+step);steps.Add(step);}
