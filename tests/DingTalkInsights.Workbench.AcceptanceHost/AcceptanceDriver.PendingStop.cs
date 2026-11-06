@@ -6,6 +6,8 @@ using DingTalkInsights.Runtime;
 using DingTalkInsights.Workbench;
 using Microsoft.UI.Xaml.Controls;
 using Workbench.WinUI.Sdk;
+using Workbench.Core;
+using Workbench.Sdk;
 
 namespace Workbench.App;
 
@@ -20,7 +22,27 @@ internal static partial class AcceptanceDriver
             var mode=readiness?"initial-readiness":"one-shot-read";
             CurrentStep="source-linked-pending-stop-"+mode;
             var root=Path.Combine(options.Root,"pending-stop",mode);HarnessOptions.RejectLinks(root);
-            var canonical=Path.Combine(root,"canonical");var cipher=new StopFixtureCipher();var source=new StopFixtureSource(readiness);
+            var canonical=Path.Combine(root,"canonical");
+            var fixtureUser=Path.Combine(root,"fixture-user");using var fixtureLease=HostRuntime.AcquireLease(fixtureUser);
+            await using var fixtureManager=new PluginManager(new(){UserRoot=fixtureUser,PluginsRoot=Path.Combine(fixtureUser,"Plugins"),
+                SharedAssemblies=[typeof(PluginSession).Assembly,typeof(InsightController).Assembly,typeof(MonitorSupervisor).Assembly]});
+            var fixturePackage=Path.Combine(root,"control-package");Directory.CreateDirectory(fixturePackage);
+            var fixtureAssembly=Path.Combine(AppContext.BaseDirectory,"control-fixture","DingTalkInsights.Workbench.RuntimeFixture.dll");
+            File.Copy(fixtureAssembly,Path.Combine(fixturePackage,Path.GetFileName(fixtureAssembly)));
+            const string fixtureId="com.projectworkbench.dti-control";
+            File.WriteAllText(Path.Combine(fixturePackage,"plugin.json"),JsonSerializer.Serialize(new{id=fixtureId,name="Synthetic production bridge control",version="0.3.1",apiVersion=1,minimumHostVersion="0.2.0",
+                entryAssembly=Path.GetFileName(fixtureAssembly),entryType="DingTalkInsights.Workbench.RuntimeFixture.ControlFixturePlugin",description="Test-only synthetic source and production bridge",capabilities=new[]{"local.synthetic"}}));
+            Require((await fixtureManager.InstallAsync(fixturePackage)).Succeeded,"Registered native control fixture install failed.");
+            await fixtureManager.DiscoverAsync();Require((await fixtureManager.EnableAsync(fixtureId,confirmTrust:true)).Succeeded,"Registered native control fixture enable failed.");
+            var fixtureView=fixtureManager.Contributions.Views.Single().View;
+            var session=(PluginSession)fixtureView.GetType().GetProperty("Session")!.GetValue(fixtureView)!;
+            var controller=session.Controller;var gate=session.Actions;
+            var source=new SourceControl(fixtureView.GetType().GetProperty("Source")!.GetValue(fixtureView)!);source.HoldReadiness=readiness;
+            var cipher=(IDataCipher)fixtureView.GetType().GetProperty("Cipher")!.GetValue(fixtureView)!;
+            var statuses=(Func<IReadOnlyList<MonitorStatus>>)(()=> (IReadOnlyList<MonitorStatus>)cipher.GetType().GetProperty("Statuses")!.GetValue(cipher)!);
+            var registered=fixtureManager.GetBackgroundTaskSnapshots(fixtureId).Single();
+            Require(registered.RequiresPluginStart&&!registered.ResumeOnStartup&&!registered.DesiredRunning
+                &&!(await fixtureManager.StartBackgroundTaskAsync(fixtureId,"monitor")).Succeeded,"Control fixture host Start/resume metadata bypass.");
             using(var seed=new BusinessStore(canonical,cipher))
             {
                 var state=seed.Load();
@@ -33,13 +55,8 @@ internal static partial class AcceptanceDriver
                 }
                 seed.Save(state);
             }
-            var controller=new InsightController(Path.Combine(root,"data"),"guarded-native-stop-fixture",cipher,source);
-            var gate=new NativeActionGate();
-            var session=new PluginSession(controller,Path.Combine(root,"data"),cipher,new(()=>canonical),_=>Task.FromResult(new Preferences()),_=>Task.CompletedTask)
-            {
-                Preferences=new(){PollSeconds=60,RetentionDays=7},
-                Draft=new(){Profile="fixture:local",ConversationId="fixture-stop-room",Start=DateTimeOffset.UtcNow.AddMinutes(-10),Executable=Path.Combine(root,"synthetic-dws.fixture")}
-            };
+            session.Preferences=new(){PollSeconds=60,RetentionDays=7};
+            session.Draft=new(){Profile="fixture:local",ConversationId="fixture-stop-room",Start=DateTimeOffset.UtcNow.AddMinutes(-10),Executable=Path.Combine(root,"synthetic-dws.fixture")};
             try
             {
                 Require(await controller.ConnectAsync(canonical,true),"Guarded pending-Stop fixture canonical connect failed.");
@@ -57,12 +74,13 @@ internal static partial class AcceptanceDriver
                 CurrentStep="source-linked-pending-stop-"+mode;
                 await source.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
                 Require(gate.IsBusy&&controller.Observation.PendingOperations==1,"Real page action was not pending in the production controller.");
-                var pending=controller.Observation;var writeIndex=cipher.Statuses.Count;var stopWatch=Stopwatch.StartNew();
+                var pending=controller.Observation;var writeIndex=statuses().Count;var stopWatch=Stopwatch.StartNew();
                 Invoke(Find<Button>(page,"DTI 停止监控"));
                 await source.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 var cancellationMilliseconds=stopWatch.ElapsedMilliseconds;
                 Require(stopWatch.Elapsed<TimeSpan.FromSeconds(5)&&gate.IsBusy&&controller.Observation.PendingOperations==1,
                     "Same-page Stop did not cancel promptly or returned before ignored transport retired.");
+                await Wait(()=>Find<TextBlock>(page,"DTI 监控与预算").Text.Contains("停止中")&&!Find<Button>(page,"DTI 开始监控").IsEnabled,"Native pending Stop did not render retained ownership/block new Start.");
                 var stopping=controller.Observation;
                 // The actual lower source still owns pending work. Stop must keep waiting, rather than pretend it retired.
                 Require(!source.Release.Task.IsCompleted&&stopping.Generation>pending.Generation,"Native Stop did not invalidate pending authority before release.");
@@ -70,7 +88,7 @@ internal static partial class AcceptanceDriver
                 await Wait(()=>!gate.IsBusy&&controller.Observation.PendingOperations==0,"Native Stop did not join pending controller/page work.");
                 Require(!controller.Snapshot.IsMonitoring&&!controller.Observation.SupervisorPresent&&controller.Snapshot.Candidates.Count==0,
                     "Late pending source committed Running or content after native Stop.");
-                var postStopRunningWrites=cipher.Statuses.Skip(writeIndex).Count(status=>status==MonitorStatus.Running);
+                var postStopRunningWrites=statuses().Skip(writeIndex).Count(status=>status==MonitorStatus.Running);
                 Require(controller.Observation.Dispatches==pending.Dispatches&&postStopRunningWrites==0,
                     "Pending completion dispatched again or saved Running after Stop.");
                 var retired=controller.Observation;var statePath=Path.Combine(canonical,"state.dpapi");var stoppedHash=Hash(statePath);
@@ -90,8 +108,8 @@ internal static partial class AcceptanceDriver
                     stage="source-linked-production-control-pending-stop",mode,
                     evidenceKind="separate source-linked production page in genuine original presenter; not installed-plugin service injection",
                     simulatedBoundary="IRuntimeServices readiness/read only; production controller/store/Core/MonitorSupervisor and native controls",
-                    linkedSources=new[]{"src/DingTalkInsights.Workbench/InsightPage.cs","src/DingTalkInsights.Workbench/PluginSession.cs","src/DingTalkInsights.Workbench/NativeActionGate.cs"},
-                    pageAssembly=typeof(InsightPage).Assembly.FullName,runtimeAssembly=typeof(InsightController).Assembly.FullName,
+                    linkedSources=new[]{"src/DingTalkInsights.Workbench/InsightPage.cs","src/DingTalkInsights.Workbench/PluginSession.cs","src/DingTalkInsights.Workbench/NativeActionGate.cs","src/DingTalkInsights.Workbench/WorkbenchMonitorTask.cs"},
+                    registeredTask=registered,fixtureAssemblySha256=Hash(fixtureAssembly),pageAssembly=typeof(InsightPage).Assembly.FullName,runtimeAssembly=typeof(InsightController).Assembly.FullName,
                     coreAssembly=typeof(MonitorSupervisor).Assembly.FullName,runtimeModuleId=typeof(InsightController).Assembly.ManifestModule.ModuleVersionId,
                     runtimeSha256=Hash(typeof(InsightController).Assembly.Location),
                     pending,stopping,retired,stopCancellationMilliseconds=cancellationMilliseconds,
@@ -101,7 +119,7 @@ internal static partial class AcceptanceDriver
             }
             finally
             {
-                source.Release.TrySetResult();window.SmokeDetach();await session.DeactivateAsync();
+                source.Release.TrySetResult();window.SmokeDetach();await session.Monitoring!.DeactivateAsync();Require((await fixtureManager.DisableAsync(fixtureId)).Succeeded,"Registered control fixture disable failed.");
                 Require(controller.Observation.Subscriptions==0&&!controller.Observation.StoreOwned&&controller.Observation.PendingOperations==0,
                     "Pending-Stop fixture cleanup retained real resources.");
                 using var lease=new FileStream(Path.Combine(canonical,"state.dpapi.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
@@ -110,45 +128,13 @@ internal static partial class AcceptanceDriver
         Require(AppDomain.CurrentDomain.GetAssemblies().Where(a=>a.GetName().Name=="DingTalkInsights.Workbench")
             .All(a=>AssemblyLoadContext.GetLoadContext(a)!=AssemblyLoadContext.Default),"Business plugin DLL was preloaded into default host context.");
     }
-    sealed class StopFixtureCipher:IDataCipher
+    sealed class SourceControl(object target)
     {
-        readonly DpapiCipher inner=new();readonly List<MonitorStatus> statuses=[];
-        public IReadOnlyList<MonitorStatus> Statuses{get{lock(statuses)return statuses.ToArray();}}
-        public byte[] Protect(byte[] bytes)
-        {
-            using(var document=JsonDocument.Parse(bytes))if(document.RootElement.TryGetProperty("Supervisor",out var health))
-                lock(statuses)statuses.Add((MonitorStatus)health.GetProperty("Status").GetInt32());
-            return inner.Protect(bytes);
-        }
-        public byte[] Unprotect(byte[] bytes)=>inner.Unprotect(bytes);
-    }
-    sealed class StopFixtureSource(bool readiness):IRuntimeServices
-    {
-        int held,inspections,reads;
-        public int Inspections=>Volatile.Read(ref inspections);public int Reads=>Volatile.Read(ref reads);
-        public TaskCompletionSource Entered{get;}=new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Cancelled{get;}=new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Release{get;}=new(TaskCreationOptions.RunContinuationsAsynchronously);
-        async Task Hold(CancellationToken cancellation)
-        {
-            using var registration=cancellation.Register(()=>Cancelled.TrySetResult());Entered.TrySetResult();
-            await Release.Task; // Ignore cancellation until explicitly released, to test actual retirement ownership.
-        }
-        public async Task<string> InspectSourceAsync(string executable,string profile,CancellationToken cancellation)
-        {
-            Interlocked.Increment(ref inspections);
-            if(readiness&&Interlocked.CompareExchange(ref held,1,0)==0)await Hold(cancellation);
-            return Guard.Hash("synthetic-native-DWS-transport");
-        }
-        public async Task<MessageBatch> ReadAsync(string executable,QueryScope scope,CancellationToken cancellation)
-        {
-            Interlocked.Increment(ref reads);
-            if(!readiness&&Interlocked.CompareExchange(ref held,1,0)==0)await Hold(cancellation);
-            return new(scope,[new("native-fixture-1",scope.ConversationId,"fixture-user","Synthetic sender","Synthetic pending-stop evidence",scope.Start+(scope.End-scope.Start)/2)],true,[],new Dictionary<string,JsonElement>());
-        }
-        public Task<MessageBatch> SearchAsync(string executable,QueryScope scope,string keywords,CancellationToken cancellation)=>throw new InvalidOperationException("Unexpected fixture search.");
-        public Task<IReadOnlyList<Conversation>> DiscoverAsync(string executable,string profile,DateTimeOffset start,DateTimeOffset end,CancellationToken cancellation)=>throw new InvalidOperationException("Unexpected fixture discovery.");
-        public Task<ModelResult> AnalyzeAsync(string key,MessageBatch batch,string task,ModelSettings model,CancellationToken cancellation)=>throw new InvalidOperationException("No model dispatch permitted in native Stop fixture.");
-        public Task<DeliveryStatus> SendAsync(WebhookTarget target,string text,CancellationToken cancellation)=>throw new InvalidOperationException("No sender dispatch permitted in native Stop fixture.");
+        T Get<T>(string name)=>(T)target.GetType().GetProperty(name)!.GetValue(target)!;
+        public bool HoldReadiness{set=>target.GetType().GetProperty("HoldReadiness")!.SetValue(target,value);}
+        public TaskCompletionSource Entered=>Get<TaskCompletionSource>("Entered");
+        public TaskCompletionSource Cancelled=>Get<TaskCompletionSource>("Cancelled");
+        public TaskCompletionSource Release=>Get<TaskCompletionSource>("Release");
+        public int Inspections=>Get<int>("Inspections");public int Reads=>Get<int>("Reads");
     }
 }

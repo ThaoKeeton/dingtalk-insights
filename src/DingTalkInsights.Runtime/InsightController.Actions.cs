@@ -54,7 +54,7 @@ public sealed partial class InsightController
                 supervisor=created;created.Changed+=MonitorChanged;
             });
             var started=await created.StartAsync(config,confirmed:true,cancellation:operation.Token);
-            Commit(operation,()=>{if(started){configuration=config;notice=config.Source=="demo"?"模拟持续检查已开始，不连接任何服务。":"持续检查已按本次明确范围开始，不自动发送 Webhook。";}});
+            Commit(operation,()=>{if(started){monitoringCompletion=created.Completion;configuration=config;notice=config.Source=="demo"?"模拟持续检查已开始，不连接任何服务。":"持续检查已按本次明确范围开始，不自动发送 Webhook。";}});
             return started;
         },RuntimeFailure.Configuration,cancellation);
     }

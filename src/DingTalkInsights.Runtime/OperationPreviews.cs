@@ -8,6 +8,9 @@ public sealed class MonitoringPreview
     internal MonitoringPreview(PreviewAuthority authority,MonitoringRequest request,QueryScope next,DateTimeOffset? covered,CoveredRange? abandoned,int messages,int reports,bool retained)
     {Authority=authority;Request=request;NextRead=next;PreviousCoveredThrough=covered;AbandonedGap=abandoned;ExpiringMessages=messages;ExpiringReports=reports;WithinRetention=retained;}
     internal PreviewAuthority Authority{get;}
+    public long Generation=>Authority.Generation;
+    public DateTimeOffset CreatedAt=>Authority.CreatedAt;
+    public DateTimeOffset ExpiresAt=>Authority.ExpiresAt;
     public MonitoringRequest Request{get;}
     public QueryScope NextRead{get;}
     public DateTimeOffset? PreviousCoveredThrough{get;}

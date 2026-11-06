@@ -25,6 +25,7 @@ public sealed partial class InsightController:IAsyncDisposable
     BusinessStore? store;
     InsightState state=new();
     MonitorSupervisor? supervisor;
+    Task monitoringCompletion=Task.CompletedTask;
     string? canonicalRoot;
     CredentialVault? selectedVault;
     string selectedRevision="";
@@ -56,7 +57,7 @@ public sealed partial class InsightController:IAsyncDisposable
     public Task InitializeAsync(){EnsureActive();return Task.CompletedTask;}
     public Task Deactivation{get{lock(sync)return deactivation;}}
     /// <summary>The actual supervisor loop. Capture after a successful Start; Stop/Deactivate await its retirement.</summary>
-    public Task MonitoringCompletion{get{lock(sync)return supervisor?.Completion??Task.CompletedTask;}}
+    public Task MonitoringCompletion{get{lock(sync)return monitoringCompletion;}}
     public RuntimeSnapshot Snapshot
     {
         get

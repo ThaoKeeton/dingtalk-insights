@@ -32,6 +32,7 @@ internal sealed class InsightPage:UserControl
     readonly CheckBox useModel=Named(new CheckBox{Content="仅模型用途"},"DTI 凭据用于模型"),useWebhook=Named(new CheckBox{Content="仅人工 Webhook 用途"},"DTI 凭据用于 Webhook");
     Button? begin;
     SnapshotBinding? binding;
+    IDisposable? monitorBinding;
     bool loaded,rendering,rendered;
     string lastAction="none",actionOutcome="none",saveStage="none",failureCategory="none";
     bool? actionStartedOnUi,saveResumedOnUi;
@@ -41,7 +42,7 @@ internal sealed class InsightPage:UserControl
 
     public InsightPage(PluginSession session,bool settings,NativeActionGate? actions=null)
     {
-        this.session=session;controller=session.Controller;this.actions=actions??new();
+        this.session=session;controller=session.Controller;this.actions=actions??session.Actions;
         Named(this,settings?"DTI 原生设置":"DTI 原生工作区");
         HorizontalContentAlignment=HorizontalAlignment.Stretch;Content=new ScrollViewer{HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,HorizontalContentAlignment=HorizontalAlignment.Stretch,Content=body};
         body.Children.Add(Text(settings?"钉钉沟通事项 · 设置":"钉钉沟通事项",26));
@@ -55,15 +56,17 @@ internal sealed class InsightPage:UserControl
         {
             if(loaded)return;loaded=true;attachment++;
             binding=new(controller,action=>DispatcherQueue.TryEnqueue(()=>action()),Render);
+            var epoch=attachment;
+            monitorBinding=session.Monitoring?.Subscribe(()=>DispatcherQueue.TryEnqueue(()=>{if(loaded&&attachment==epoch)Render(controller.Snapshot);}));
         };
-        Unloaded+=(_,_)=>{loaded=false;rendered=false;attachment++;binding?.Dispose();binding=null;key.Password="";webhook.Password="";secret.Password="";};
+        Unloaded+=(_,_)=>{loaded=false;rendered=false;attachment++;binding?.Dispose();binding=null;monitorBinding?.Dispose();monitorBinding=null;key.Password="";webhook.Password="";secret.Password="";};
     }
     void BuildWorkspace()
     {
         Add(demo,upload);
         Add(Action("打开模拟本机库","DTI 打开模拟",async()=>{await Work(()=>controller.OpenDemoAsync());}));
         body.Children.Add(Text("身份、会话、时间、DWS 路径与限额在插件设置中明确填写并保存。真实来源须先连接标准独立版账本，再按每次预览授权。"));
-        Add(Action("读取一次…","DTI 读取一次",Read),Action("预览并开始监控…","DTI 开始监控",Begin,out begin),Action("停止并等待退役","DTI 停止监控",async()=>{await Work(controller.StopMonitoringAsync);},stop:true));
+        Add(Action("读取一次…","DTI 读取一次",Read),Action("预览并开始监控…","DTI 开始监控",Begin,out begin),Action("停止并等待退役","DTI 停止监控",async()=>{await Work((session.Monitoring??throw new RuntimeFault(RuntimeFailure.Inactive)).StopAsync);},stop:true));
         Add(keywords,dwsSearch,Action("搜索…","DTI 搜索",Search));
         Add(candidates,Action("预览并整理候选…","DTI 整理候选",Analyze),report);
         Add(issue,Action("复核证据并确认解决…","DTI 人工确认解决",Resolve),Action("复制 Markdown","DTI 复制 Markdown",Copy));
@@ -87,7 +90,7 @@ internal sealed class InsightPage:UserControl
         Add(Action("清理本机内容索引…","DTI 清理索引",async()=>
         {if(await Confirm("清理索引","仅清理当前连接的本机消息、结果与断点；当日预算、请求和发送尝试保留。不会修改钉钉原始聊天。"))await Work(()=>controller.ClearIndexAsync(true));}));
         body.Children.Add(Text("帮助与限制",20));
-        body.Children.Add(Text("监控为官方 DWS 会话消息轮询，不是桌面捕获。只读模式不调用模型；未知/不完整来源不会推进完整断点。模型失败、预算延后、权限和迁移失败均显示安全类别。关闭/睡眠/注销期间不保证实时采集。API1 没有停止原因、后台恢复、密钥服务或卸载事务：停用/退出均彻底退役，重新启用须重新确认。程序集保持加载至进程退出；请退出宿主后才移除包。人工 Webhook 结果不确定时不自动重发，重发可能重复。费用单价是用户输入的本地估算，不是实时报价。"));
+        body.Children.Add(Text("监控为官方 DWS 会话消息轮询，不是桌面捕获。只读模式不调用模型；未知/不完整来源不会推进完整断点。模型失败、预算延后、权限和迁移失败均显示安全类别。关闭/睡眠/注销期间不保证实时采集。宿主 0.2 注册一个须经插件预览确认的监控任务，不允许宿主通用开始或自动恢复。停止监控保留明确连接与已批准用途；停用/退出彻底退役，再次开始须新确认。已声明宿主密钥元数据，本版仍仅支持插件/标准账本本机 DPAPI 凭据。宿主包服务须重启前维护；当前宿主通用管理界面未接入，程序集保持加载至退出。人工 Webhook 结果不确定时不自动重发，重发可能重复。费用单价是用户输入的本地估算，不是实时报价。"));
     }
     // Safe metadata only: never return entered values, content, credentials or notice text.
     public object ActionObservation=>new{Ready=loaded&&rendered&&binding is not null,Loaded=loaded,Rendered=rendered,Attachment=attachment,
@@ -130,14 +133,14 @@ internal sealed class InsightPage:UserControl
         {
             if(task.Text!=snapshot.Draft)task.Text=snapshot.Draft;
             notice.Text=pageNotice.ApplyRuntime(snapshot.Notice);
-            health.Text=$"来源：{snapshot.Connection} · {(snapshot.IsMonitoring?"监控运行中":"已停止")} · {snapshot.Health.Status}\n{MonitorNotices.For(snapshot.Health.Failure)}\n下次检查：{snapshot.Health.NextReadAt:O} · 模型延后：{snapshot.Health.ModelDeferredUntil:O}\nUTC 日：{snapshot.BudgetDay} · 预留 ${F(snapshot.ReservedUsd)} · 请求 {snapshot.Requests} · 保留 {snapshot.RetentionDays} 天";
+            health.Text=$"来源：{snapshot.Connection} · {(session.Monitoring?.IsStopping==true?"停止中，仍持有工作与租约":snapshot.IsMonitoring?"监控运行中":"已停止")} · {snapshot.Health.Status}\n{MonitorNotices.For(snapshot.Health.Failure)}\n下次检查：{snapshot.Health.NextReadAt:O} · 模型延后：{snapshot.Health.ModelDeferredUntil:O}\nUTC 日：{snapshot.BudgetDay} · 预留 ${F(snapshot.ReservedUsd)} · 请求 {snapshot.Requests} · 保留 {snapshot.RetentionDays} 天";
             candidates.Text=string.Join("\n\n",snapshot.Candidates.Select(m=>$"[{m.MessageId}] {m.CreatedAt:O} · {m.Sender}\n{m.Text}"));
             report.Text=snapshot.Markdown;
             conversations.ItemsSource=snapshot.Conversations.Select(c=>new ConversationRow(c)).ToArray();
             var selected=(history.SelectedItem as HistoryRow)?.Value;
             history.ItemsSource=snapshot.History.Reverse().Select(h=>new HistoryRow(h)).ToArray();
             if(selected is not null)history.SelectedItem=((IEnumerable<HistoryRow>)history.ItemsSource).FirstOrDefault(h=>h.Value==selected);
-            if(begin is not null)begin.IsEnabled=!snapshot.IsMonitoring&&!snapshot.IsBusy;
+            if(begin is not null)begin.IsEnabled=!snapshot.IsMonitoring&&!snapshot.IsBusy&&session.Monitoring is {IsStopping:false};
             rendered=true;
         }
         finally{rendering=false;}
@@ -152,7 +155,7 @@ internal sealed class InsightPage:UserControl
     {
         var request=session.CaptureRequest(demo.IsChecked==true,upload.IsChecked==true);
         var preview=controller.PreviewMonitoring(request);
-        if(await Confirm("本次监控预览",$"来源 {preview.Request.Source} · {preview.Request.Profile} / {preview.Request.ConversationId}\n下一窗口：{preview.NextRead.Display}\n既有连续进度：{preview.PreviousCoveredThrough:O}\n放弃缺口：{preview.AbandonedGap}\n保留期内：{preview.WithinRetention} · 将过期消息 {preview.ExpiringMessages} / 结果 {preview.ExpiringReports}\nDWS：{request.Executable}\n每 {request.PollSeconds} 秒；保留 {request.RetentionDays} 天。模型：{(request.UploadToModel?request.Model.Model:"只读，不调用")}\n输入 ${F(request.Model.InputUsdPerMillion)} / 输出 ${F(request.Model.OutputUsdPerMillion)} 每百万 token\n预算 ${F(request.Model.DailyBudgetUsd)} / UTC 日，{request.Model.MaxRequestsPerDay} 请求；输出上限 {request.Model.MaxOutputTokens}。\n不自动 Webhook，停用和退出后须重新批准。"))await Work(()=>controller.StartMonitoringAsync(preview,true));
+        if(await Confirm("本次监控预览",$"来源 {preview.Request.Source} · {preview.Request.Profile} / {preview.Request.ConversationId}\n下一窗口：{preview.NextRead.Display}\n既有连续进度：{preview.PreviousCoveredThrough:O}\n放弃缺口：{preview.AbandonedGap}\n保留期内：{preview.WithinRetention} · 将过期消息 {preview.ExpiringMessages} / 结果 {preview.ExpiringReports}\nDWS：{request.Executable}\n每 {request.PollSeconds} 秒；保留 {request.RetentionDays} 天。模型：{(request.UploadToModel?request.Model.Model:"只读，不调用")}\n输入 ${F(request.Model.InputUsdPerMillion)} / 输出 ${F(request.Model.OutputUsdPerMillion)} 每百万 token\n预算 ${F(request.Model.DailyBudgetUsd)} / UTC 日，{request.Model.MaxRequestsPerDay} 请求；输出上限 {request.Model.MaxOutputTokens}。\n不自动 Webhook，停用和退出后须重新批准。"))if(!await Work(()=>(session.Monitoring??throw new RuntimeFault(RuntimeFailure.Inactive)).StartAsync(preview,true)))throw new RuntimeFault(RuntimeFailure.Configuration);
     }
     async Task Search()
     {

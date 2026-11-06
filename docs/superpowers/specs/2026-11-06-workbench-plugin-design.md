@@ -1,6 +1,6 @@
 # DingTalk Insights native Workbench adaptation
 
-Task 1 authority: `/tmp/dingtalk-workbench-task1-brief.md`. These are implementation choices made by the implementer under the user's instruction to proceed without routine questions; they are not additional user-approved specifics. Only synthetic tests are authorized. Native SDK source is read-only at `6565180b17130f6d494978291df4138de3fdb0b4`.
+Task 1 authority: `/tmp/dingtalk-workbench-task1-brief.md`. These are implementation choices made by the implementer under the user's instruction to proceed without routine questions; they are not additional user-approved specifics. Only synthetic tests are authorized. Task1/2 originally used read-only `6565180b17130f6d494978291df4138de3fdb0b4`; Task3 supersedes the active pin with verified `82bd958e220aaf94ccdbf1ea68b0ec53b770706a` while retaining rollback.
 
 ## Runtime and data ownership
 
@@ -39,3 +39,9 @@ Task 1 gates exercise real encrypted storage/lease/controller with temporary roo
 The reusable runtime exposed a Core final-report-save issue: after a failed durable save, a newly appended report and usage could remain in memory and become visible or persist on later Stop. A production-boundary RED test now pins rollback of only that undurable report/returned usage, retaining the pre-HTTP attempt and budget reservation. StateStore.cs and its v0.2 serializer/schema remain unchanged, so old-format roundtrip tests exercise that exact production implementation.
 
 Idle snapshots now use a monotonic retention reference; clock rollback cannot resurrect expired visible content. Business snapshots publish while the operation gate is held; editing a draft notifies from a cached snapshot rather than reading mutable engine state.
+
+## Task3 accepted runtime/package boundary
+
+Binding brief `/tmp/dingtalk-workbench-task3-brief.md`, base03c320a; user authorized inline implementation without routine confirmation or subagents. Plugin0.3.1/API1/minimumHost0.2.0 uses one exact 35-input graph. One controller/session, one plugin-only registered monitor, same immutable user-reviewed preview, scheduling admission plus actual start acknowledgement, real original loop/cleanup ownership and priority Stop even with no monitor are required. Task Stop retains the explicit connection and purpose selection; terminal Stop revokes and awaits persistence/operations/lease. No auto-resume or startup authority.
+
+The private SDK-only Bridge library shares production coordinator/session code with a separately loaded test-only Manager fixture, avoiding a default-context preload of the business plugin DLL. Runtime/Core remain net8. Three host secret definitions are metadata only; host value provider is deferred to Task4. PackageStore is test/host-only, with a fresh lease-owning helper before any discovery; KeepData is unconditional, code rollback never restores old data and external canonical budgets/attempts remain outside host backups. The unchanged shipping App/generic UI is not claimed integrated. Exact-head native generated PRI/XAML Windows, independent review, Windows11/live/multiday remain distinct gates.

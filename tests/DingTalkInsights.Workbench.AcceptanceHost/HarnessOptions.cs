@@ -20,7 +20,7 @@ internal sealed record HarnessOptions(string Root,string RunId,string Phase,stri
         using var marker=JsonDocument.Parse(File.ReadAllText(Path.Combine(root,".dti-acceptance-owner.json")));
         if(marker.RootElement.GetProperty("runId").GetString()!=id.ToString("N"))throw new IOException("Owned root marker does not match.");
         var phase=values["--phase"];
-        if(phase is not("initial" or "restart" or "changed" or "absent"))throw new ArgumentException("Invalid phase.");
+        if(phase is not("initial" or "restart" or "changed" or "absent" or "maintained" or "removed" or "rolledback"))throw new ArgumentException("Invalid phase.");
         var package=Path.GetFullPath(values["--package"]);RejectLinks(package);
         Directory.CreateDirectory(Path.Combine(root,"evidence"));
         return new(root,id.ToString("N"),phase,package,Path.Combine(root,"evidence",phase+".json"));

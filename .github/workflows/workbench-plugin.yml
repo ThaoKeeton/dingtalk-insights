@@ -25,6 +25,15 @@ jobs:
       - name: Build original pinned SDK, actual plugin package and separate genuine native host
         shell: pwsh
         run: ./scripts/build-workbench-plugin.ps1
+      - name: Public SDK bridge with real Manager and actual package restart recovery
+        shell: pwsh
+        run: |
+          dotnet build tests/DingTalkInsights.Workbench.RuntimeTests -c Release -o artifacts/workbench-plugin/runtime-tests -p:ArtifactsPath=${{ github.workspace }}/artifacts/workbench-plugin/runtime-tests-build -p:UseSharedCompilation=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet artifacts/workbench-plugin/runtime-tests/DingTalkInsights.Workbench.RuntimeTests.dll artifacts/workbench-plugin/control-fixture/DingTalkInsights.Workbench.RuntimeFixture.dll
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet artifacts/workbench-plugin/tool/Microsoft.DingTalkInsights.PackageTool.dll test-maintenance artifacts/workbench-plugin/package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: net8 to net10 persisted-state and native DPAPI interoperability
         shell: pwsh
         run: ./scripts/test-workbench-interop.ps1

@@ -11,7 +11,7 @@ if (-not (Test-Path -LiteralPath "$build/.dti-build-owner")) { throw 'Build owne
 $evidence = Join-Path $build 'evidence'
 New-Item -ItemType Directory -Path $evidence -Force | Out-Null
 $tool = Join-Path $build 'tool/Microsoft.DingTalkInsights.PackageTool.dll'
-$final = [ordered]@{ succeeded = $false; evidenceKind = 'source-linked-unmodified-presenter-compatibility'; runs = @(); limitations = @('Not the unchanged shipping Workbench EXE', 'No SDK uninstall: driver offline removal only after verified exit; trust/enabled preferences and data retained', 'No real DingTalk/DWS enterprise/model/Webhook integration', 'Windows Server automated acceptance does not replace Windows11 24H2 DPI/keyboard/visual/manual or multiday testing') }
+$final = [ordered]@{ succeeded = $false; evidenceKind = 'source-linked-unmodified-presenter-compatibility'; runs = @(); limitations = @('Not the unchanged shipping Workbench EXE', 'SDK maintenance uses a guarded fresh helper before discovery; unchanged shipping App and generic management UI do not apply it; KeepData is unconditional', 'No real DingTalk/DWS enterprise/model/Webhook integration', 'Windows Server automated acceptance does not replace Windows11 24H2 DPI/keyboard/visual/manual or multiday testing') }
 function Reject-Links([string]$Path) {
     $part = [IO.Path]::GetFullPath($Path)
     while ($part) {
@@ -233,9 +233,29 @@ function Run-Sequence([string]$HostDir, [string]$PackageDir, [string]$Variant) {
     if ([IO.Path]::GetFullPath($installed) -ne [IO.Path]::GetFullPath((Join-Path $root 'user/Plugins/com.projectworkbench.dingtalk-insights'))) { throw 'Owned package target mismatch' }
     Remove-Item -LiteralPath $installed -Recurse -Force
     Invoke-Phase $HostDir $PackageDir $root $runId 'absent' $Variant
+    # New SDK maintenance is separate from the retained old offline-delete regression.
+    # Every helper owns and releases the actual UserRoot lease, and exits before the next genuine presenter starts.
+    $maintenanceZip = Join-Path $root 'actual-plugin.zip'
+    Compress-Archive -Path "$PackageDir/*" -DestinationPath $maintenanceZip
+    function Invoke-OwnedMaintenance([string]$Action, [string]$Extra = '') {
+        Assert-OwnedRoot $root $runId
+        $arguments = @($tool, 'maintenance', $Action, $root, $runId)
+        if ($Extra) { $arguments += $Extra }
+        & dotnet @arguments
+        if ($LASTEXITCODE -ne 0) { throw "SDK owned maintenance failed: $Action" }
+        $lease = [IO.FileStream]::new((Join-Path $root 'user/host.lock'), [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        $lease.Dispose()
+    }
+    Invoke-OwnedMaintenance 'install' $maintenanceZip
+    Invoke-Phase $HostDir $PackageDir $root $runId 'maintained' $Variant
+    Invoke-OwnedMaintenance 'apply'
+    Invoke-Phase $HostDir $PackageDir $root $runId 'removed' $Variant
+    Invoke-OwnedMaintenance 'rollback'
+    Invoke-OwnedMaintenance 'apply'
+    Invoke-Phase $HostDir $PackageDir $root $runId 'rolledback' $Variant
     Copy-Item -LiteralPath "$root/evidence" -Destination "$evidence/$Variant-native" -Recurse
     # Do not upload even synthetic encrypted state/credentials; retain local root for diagnosis only.
-    @{ variant = $Variant; runId = $runId; localRoot = $root; packageRemoved = $true; dataRetained = (Test-Path "$root/user/data/com.projectworkbench.dingtalk-insights/connection-draft.dpapi") } | ConvertTo-Json | Set-Content "$evidence/$Variant-offline-removal.json"
+    @{ variant = $Variant; runId = $runId; localRoot = $root; sdkCodeRollbackRetained = $true; dataRetained = (Test-Path "$root/user/data/com.projectworkbench.dingtalk-insights/connection-draft.dpapi") } | ConvertTo-Json | Set-Content "$evidence/$Variant-offline-removal.json"
 }
 try {
     Run-Sequence "$build/host" "$build/package" 'published'
@@ -243,7 +263,7 @@ try {
     if (Test-Path $extracted) { throw 'Extraction target already exists' }
     New-Item -ItemType Directory -Path $extracted | Out-Null
     Expand-Archive -LiteralPath "$build/DingTalkInsights.Workbench.AcceptanceHost-win-x64.zip" -DestinationPath "$extracted/host"
-    Expand-Archive -LiteralPath "$build/DingTalkInsights.Workbench-0.3.0-win-x64.zip" -DestinationPath "$extracted/package"
+    Expand-Archive -LiteralPath "$build/DingTalkInsights.Workbench-0.3.1-win-x64.zip" -DestinationPath "$extracted/package"
     if (-not (Test-Path -LiteralPath "$extracted/package/plugin.json")) { throw 'ZIP root does not contain plugin.json' }
     Run-Sequence "$extracted/host" "$extracted/package" 're-extracted'
     $final.succeeded = $true

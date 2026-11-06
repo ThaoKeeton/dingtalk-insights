@@ -19,3 +19,5 @@ Record date, Windows11 24H2+ x64 OS/build, session, DPI, product commit, package
 | Changed package requires new trust; offline package-only removal after exit retains data | Not run | |
 | Real standard-store connection / DPAPI purposes / model / manual Webhook integration | Not run; separate explicit authorization needed | |
 | Multi-day polling/sleep/logoff/failure behavior | Not run | |
+
+Task3 (0.3.1 / SDK82) adds registered monitor and actual SDK package-helper phases. Its exact-head native Windows result is pending; the old API1 checkpoint83c75e8 passed complete published/re-extracted Server2025 automation. Verify pending-stop text and fresh Start after real retirement, zero automatic monitor/secret-value access on restore, and distinguish guarded SDK maintenance helper from the unchanged shipping App. Host secret value actions remain Task4. Existing manual/live/multiday blanks are not closed by reference compilation or Server2025 automation.

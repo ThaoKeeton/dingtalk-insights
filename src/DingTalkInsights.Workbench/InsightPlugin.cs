@@ -9,21 +9,31 @@ namespace DingTalkInsights.Workbench;
 public sealed class InsightPlugin:IWorkbenchPlugin
 {
     PluginSession? session;
+    WorkbenchMonitorTask? monitor;
     object? viewFailure;
     WeakReference<InsightPage>? currentPage;
     public InsightPlugin() { }
-    public Task InitializeAsync(IPluginContext context,CancellationToken cancellationToken)
+    public async Task InitializeAsync(IPluginContext context,CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if(session is not null)throw new InvalidOperationException("Plugin instance already initialized.");
+        if(context is not IPluginRuntimeContext runtime)throw new InvalidOperationException("Workbench host 0.2 runtime services are required.");
         var cipher=new DpapiCipher();
         var controller=new InsightController(context.DataDirectory,context.PluginId,cipher,lifetime:context.Lifetime);
         session=new(controller,context.DataDirectory,cipher,CanonicalStoreLocation.Production(),
             token=>context.Settings.GetAsync("preferences",new Preferences(),token),
             value=>context.Settings.SetAsync("preferences",value));
-        context.RegisterView(new WinUiView("workspace","钉钉沟通事项",CreateWorkspace));
-        context.RegisterView(new WinUiView("settings","钉钉沟通事项",CreateSettings,WinUiViewKind.Settings));
-        return controller.InitializeAsync();
+        try
+        {
+            monitor=new(session,runtime.BackgroundTasks,()=>runtime.StopReason,context.Lifetime);session.Monitoring=monitor;monitor.Register();
+            runtime.Secrets.Register(new("openai.api-key","OpenAI API key","仅声明元数据；本版不读取或写入宿主值。"));
+            runtime.Secrets.Register(new("dingtalk.webhook-url","钉钉 Webhook URL","仅声明元数据；本版不读取或写入宿主值。"));
+            runtime.Secrets.Register(new("dingtalk.webhook-secret","钉钉 Webhook 签名密钥","仅声明元数据；本版不读取或写入宿主值。"));
+            context.RegisterView(new WinUiView("workspace","钉钉沟通事项",CreateWorkspace));
+            context.RegisterView(new WinUiView("settings","钉钉沟通事项",CreateSettings,WinUiViewKind.Settings));
+            await controller.InitializeAsync();
+        }
+        catch{if(monitor is not null)await monitor.DeactivateAsync();else await session.DeactivateAsync();throw;}
     }
     FrameworkElement CreateWorkspace()=>CreatePage(false);
     FrameworkElement CreateSettings()=>CreatePage(true);
@@ -45,13 +55,13 @@ public sealed class InsightPlugin:IWorkbenchPlugin
     }
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        // API1 has no StopReason. Never infer business recovery authority from host shutdown/disable.
-        if(session is not null)await session.DeactivateAsync();
+        if(monitor is not null)await monitor.DeactivateAsync();else if(session is not null)await session.DeactivateAsync();
     }
     // Read-only product diagnostics. No content, credentials, provider bodies, filesystem or business work.
     public string ObservationJson=>JsonSerializer.Serialize(new
     {
         ViewFailure=viewFailure,
+        RegisteredMonitor=monitor?.Observation,
         Page=currentPage is not null&&currentPage.TryGetTarget(out var page)?page.ActionObservation:null,
         Resources=session?.Controller.Observation,
         AdapterPendingPersistence=session?.PendingPersistence??0,

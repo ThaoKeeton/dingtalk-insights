@@ -58,7 +58,7 @@
 - [x] Parent reviews Task 1 commit/interfaces before dispatching a fresh implementer.
 - [x] Adapter forwards DataDirectory/Lifetime and owns one controller; factories create standard WinUI controls and disposable subscriptions only.
 - [x] Implement private-dependency staging, shared-identity guards and actual Windows host/extracted ZIP phase drivers.
-- [ ] Execute actual Windows native publish/lifecycle and extracted ZIP phases in parent CI. Distinguish restart-required removal from driver file deletion; no private business smoke API is presumed.
+- [x] Parent API1 preflight run 42279542384 passed actual native publish/lifecycle and the entire re-extracted ZIP matrix; checkpoint 83c75e8 remains the rollback. Task3 SDK82 is a distinct pending Windows gate; legacy offline deletion stays labeled.
 
 ## Task 1 verification ledger
 
@@ -71,3 +71,21 @@ Ruling: retain implemented/verified 6565180b API1; later 0.2 contracts are not a
 Files: `src/DingTalkInsights.Workbench`, exact 24-blob `eng/vendor/workbench-6565180b`, `tests/DingTalkInsights.Workbench.AcceptanceHost`, PackageTool, net8/net10 InteropFixture, portable adapter tests, build/interop/native launcher scripts and dedicated Windows2025 workflow. Details and current evidence boundaries: `docs/workbench-plugin.md`, `/tmp/dingtalk-workbench-task2-report.md`.
 
 Targeted RED->GREEN: warning-array/request-body freeze; missing adapter contracts; pending adapter persistence returning after Stop; nested inventory payload omission; exact native one-shot read scope across dialog delay. New read overload consumes the real MonitoringPreview and fixes the bounded end instead of recomputing it after the dialog. Core/standalone targets remain unchanged.
+
+### Task 3: verified SDK services and registered real monitoring
+
+Binding spec: `/tmp/dingtalk-workbench-task3-brief.md`; fixed base `03c320a`. Inline execution, no subagents/extra confirmation; root owns independent review/Windows/push. Runtime/Core/standalone stay net8; adapter/harness/tool use one exact 35-input `82bd958e220aaf94ccdbf1ea68b0ec53b770706a` graph. Plugin 0.3.1/API1/minimumHostVersion0.2.0. Host secret values are deferred to Task4; only three definitions are registered.
+
+- [x] Carry A/B preflight in `83c75e8`: sticky failure/admitted real system request, completed native page action plus rendered source/report/history. Linux source-linked reference build: zero warnings/errors; parent API1 Windows 42279542384 passed the full published and re-extracted matrix.
+- [x] Import exact verified 35-input graph and align plugin, host, PackageTool, build-info/checkout/scripts; retain `6565180b` rollback.
+- [x] Add public-SDK-only `WorkbenchMonitorTask` and UI-neutral `IMonitoringCoordinator` seam. `StartAsync(MonitoringPreview,bool,CancellationToken)` hands the same reviewed preview to one registered `monitor` task, then awaits an actual controller acknowledgement. `StopAsync` immediately invalidates all controller operations even with no registered work; terminal `DeactivateAsync` joins the shared session retirement without awaiting its own worker.
+- [x] Add deterministic net10 bridge tests with actual Runtime/Core/controller/supervisor and lower synthetic transports: queued scheduling versus actual start; one-use/expiry/generation, duplicate/rejected context starts, cancellation before/while/after start; actual original loop and lease retention, manual operation Stop, natural exit, terminal upgrade. A dedicated public-SDK-only runtime fixture binds the production bridge to real Manager operations without cloning platform algorithms.
+- [x] Extend actual installed-plugin native assertions for task/secret metadata, rejected host starts/resume, context Start, host/manual Stop and recreated page callbacks. Make separate source-linked native pending-Stop fixtures use the registered bridge.
+- [x] Add actual package ZIP/install/stage/cancel/remove/rollback and fresh-process startup/recovery checks. Own the user-root lease before ApplyPending and call before any discovery; preserve current data/settings/secret ciphertext/history and external canonical ledger. The unchanged shipping App does not apply maintenance; label the guarded helper honestly.
+- [x] Build plugin/reference host/package with real new host references/catalog, run portable/bridge/package/source checks, perform one bounded self-check, commit locally and complete `/tmp/dingtalk-workbench-task3-report.md`; root handles independent review and actual generated PRI/XAML Windows gates.
+
+Review focus: unsuccessful context Start after queued persistence/revocation must settle acknowledgement and retire work; Stop/terminal upgrade must have no self/cross-await cycle; platform Stopping never grants new Start or releases ownership; no value read/automatic authority during restore; package replay precedes all discovery and never restores historical business data.
+
+Task3 local evidence: 200/200 portable checks, 16/16 bridge checks (including real Manager), 11/11 actual-package fresh-process maintenance/recovery checks, five package guards and exact 35-blob verification. Queue-as-readiness mutation compiled but failed the actual-controller admission assertion, then restored production passed. Linux plugin/source-linked host reference compilations are compile-only (no generated native PRI claim). Final committed-source checkout regression and Task3 report record the exact head; independent review and SDK82 Windows/PRI/full re-extracted matrix remain coordinator gates.
+
+Implementation ruling: a small private public-SDK-only Bridge shares the actual coordinator/session/action gate with the separate real-Manager control fixture; the business plugin DLL is never preloaded in the host default context. A nonce-owned lease-taking fresh PackageTool process exercises new package replay before any discovery; the unchanged shipping App does not apply pending work. All legacy rollback inputs/Core/standalone bytes remain unchanged.

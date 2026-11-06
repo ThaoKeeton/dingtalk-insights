@@ -53,6 +53,11 @@ internal static partial class AcceptanceDriver
             Require(manager.Plugins.Single().State==PluginState.Enabled,"Real trust confirmation did not enable plugin.");
             Record("Ordinary presenter Enable button and actual native trust dialog cancel/confirm");
             plugin=PluginTarget(manager);
+            var registration=manager.GetBackgroundTaskSnapshots(Id).Single();
+            Require(registration.Id=="monitor"&&registration.RequiresPluginStart&&!registration.ResumeOnStartup&&!registration.DesiredRunning,"Installed task metadata or startup policy wrong.");
+            Require(manager.GetSecretDefinitions(Id).Select(s=>s.Id).Order().SequenceEqual(new[]{"dingtalk.webhook-secret","dingtalk.webhook-url","openai.api-key"}),"Installed three secret definitions missing.");
+            Require(!(await manager.StartBackgroundTaskAsync(Id,"monitor")).Succeeded&&!(await manager.SetBackgroundTaskResumeOnStartupAsync(Id,"monitor",true)).Succeeded,"Generic host Start/resume bypassed plugin confirmation.");
+            observations.Add(new{stage="actual-installed-runtime-services",registration,secretDefinitions=manager.GetSecretDefinitions(Id).Select(s=>s.Id),hostStartAndResumeRejected=true,secretValues="not read or written; local DPAPI choices retained"});
             Require(Resources(plugin).GetProperty("Dispatches").GetInt64()==0&&!Resources(plugin).GetProperty("StoreOwned").GetBoolean(),"Initialize performed business work.");
             Require(!Directory.EnumerateFiles(data,"*.dpapi",SearchOption.AllDirectories).Any(),"Initialize/navigation created business/credential ciphertext.");
             var page=await Workspace(window);
@@ -103,6 +108,11 @@ internal static partial class AcceptanceDriver
             observations.Add(new{stage="monitor-stop",initialDispatches=reads,resources=stopped,stateHash});
             Record("Production controller/MonitorSupervisor demo loop survives page recreation singly; Stop joins real task with zero later dispatch or state writes");
             await Start(window,page,plugin);
+            var hostStoppedLoop=Loop(plugin);Require((await manager.StopBackgroundTaskAsync(Id,"monitor")).Succeeded,"Actual generic host task Stop failed.");
+            Require(hostStoppedLoop.IsCompleted&&Resources(plugin).GetProperty("StoreOwned").GetBoolean()&&Observation(plugin).GetProperty("Active").GetBoolean(),"Host task Stop did not join loop/retain explicit connection.");
+            await Wait(()=>manager.GetBackgroundTaskSnapshots(Id).Single().State==Workbench.Sdk.PluginBackgroundTaskState.Stopped,"Registered task did not finish host Stop.");
+            await Start(window,page,plugin);await VerifyActiveStaging(window,options,plugin,observations);
+            Record("Actual registered task metadata, rejected generic Start/resume, host Stop joins real loop while retaining connection; active update staging/cancel/restage leaves code and authority unchanged");
             var old=plugin;var activeTask=Loop(old);await DisableThroughPresenter(window,manager,observations);
             Require(activeTask.IsCompleted&&!(Observation(old).GetProperty("Active").GetBoolean()),"Disable left live monitor/controller.");
             var retired=Resources(old);Require(retired.GetProperty("Subscriptions").GetInt32()==0&&retired.GetProperty("PendingOperations").GetInt32()==0&&!retired.GetProperty("StoreOwned").GetBoolean(),"Disable retained subscriptions/operations/lease.");
@@ -133,6 +143,20 @@ internal static partial class AcceptanceDriver
             observations.Add(new{stage="safe-restart",resources=Resources(plugin)});
             Record("New actual process restores enabled/trusted plugin safely; default demo/no business authority; native saved preferences/draft roundtrip");
         }
+        else if(options.Phase is "maintained" or "rolledback")
+        {
+            var fresh=manager.Plugins.Single();Require(fresh.Manifest?.Id==Id&&fresh.State==PluginState.Disabled&&!fresh.IsLoaded&&!fresh.IsTrusted&&!fresh.DesiredEnabled,"SDK install/rollback inherited trust or enabled authority.");
+            Require(!(await manager.EnableAsync(Id)).Succeeded,"SDK install/rollback enabled without fresh trust.");
+            Require(Fingerprint(fresh.PackagePath)==packageHash&&File.Exists(Path.Combine(data,"connection-draft.dpapi")),"SDK install/rollback lost code/current data.");
+            Require(manager.GetBackgroundTaskSnapshots(Id).Count==0&&!AppDomain.CurrentDomain.GetAssemblies().Any(a=>a.GetName().Name=="DingTalkInsights.Workbench"),"SDK maintenance auto-loaded plugin/collector.");
+            Record("Actual fresh-process SDK "+options.Phase+" code is disabled/untrusted/unloaded; existing encrypted data retained; fresh trust still required");
+            if(options.Phase=="maintained")
+            {
+                var store=PackageStore(options);Require((await store.StageRemoveAsync(Id)).Succeeded&&Directory.Exists(fresh.PackagePath),"Real staged removal changed current code.");
+                Require((await store.ApplyPendingAsync()).All(result=>!result.Succeeded)&&store.PendingOperations.Single().Kind==PackageOperationKind.Remove,"Discovered process applied staged removal.");
+                Record("Actual SDK StageRemove retains code/current data until real exit; Apply refused after discovery; fresh guarded helper required");
+            }
+        }
         else if(options.Phase=="changed")
         {
             var changed=manager.Plugins.Single();Require(changed.Manifest?.Id==Id&&!changed.IsTrusted&&!changed.IsLoaded&&changed.State!=PluginState.Enabled,"Changed package inherited trust/load.");
@@ -145,7 +169,7 @@ internal static partial class AcceptanceDriver
         {
             Require(manager.Plugins.Count==0,"Offline removed package still discovered.");Require(Directory.Exists(data)&&File.Exists(Path.Combine(data,"connection-draft.dpapi")),"Offline package removal deleted user data.");
             var home=await window.SmokeNavigateAsync("plugins");Require(!Descendants<Button>(home).Any(b=>AutomationProperties.GetName(b)=="启用 钉钉沟通事项"),"Removed package has native action.");
-            Record("After verified prior exit, driver-only offline package removal relaunches absent while encrypted data remain; SDK has no uninstall API");
+            Record(options.Phase=="removed"?"Actual SDK staged removal applied by a fresh lease-owning helper before discovery; absent relaunch retains current encrypted data/settings/history; no purge":"After verified prior exit, driver-only offline package removal relaunches absent while encrypted data remain; separate legacy regression, not SDK uninstall");
         }
         Require(Fingerprint(options.Package)==packageHash,"Source package mutated during approval/load.");
         CurrentStep="actual-window-close";
@@ -179,7 +203,7 @@ internal static partial class AcceptanceDriver
     static async Task Start(MainWindow window,FrameworkElement page,object plugin)
     {
         await ConfirmAction(window,page,"DTI 开始监控",true);
-        await Wait(()=>Observation(plugin).GetProperty("IsMonitoring").GetBoolean()&&!Loop(plugin).IsCompleted&&Observation(plugin).GetProperty("Health").GetProperty("NextReadAt").ValueKind==JsonValueKind.String,"Production demo supervisor did not reach actual scheduled wait.");
+        await WaitActionRendered(plugin,"DTI 开始监控",()=>Observation(plugin).GetProperty("IsMonitoring").GetBoolean()&&!Loop(plugin).IsCompleted&&Observation(plugin).GetProperty("Health").GetProperty("NextReadAt").ValueKind==JsonValueKind.String,"Registered production demo supervisor did not acknowledge actual start/scheduled wait.");
     }
     static bool PresenterEnabled(MainWindow window)=>Find<NavigationView>((FrameworkElement)window.Content,"工作台导航").IsEnabled;
     static Task WaitPresenterReady(MainWindow window)=>Wait(()=>!OpenDialogs(window).Any()&&PresenterEnabled(window),
@@ -227,7 +251,15 @@ internal static partial class AcceptanceDriver
             state=manager.Plugins.Single().State.ToString(),remainingViews=manager.Contributions.Views.Count(v=>v.PluginId==Id)});
     }
     static async Task ConfirmAction(MainWindow window,FrameworkElement page,string name,bool approve)
-    {CurrentStep=name switch{"DTI 开始监控"=>"native-monitor-start","DTI 读取一次"=>"native-read-once","DTI 搜索"=>"native-search","DTI 整理候选"=>"native-analysis",_=>"native-confirmed-action"};Invoke(Find<Button>(page,name));await Dialog(window,approve,"确认本次操作");await Task.Delay(40);}
+    {
+        CurrentStep=name switch{"DTI 开始监控"=>"native-monitor-start","DTI 读取一次"=>"native-read-once","DTI 搜索"=>"native-search","DTI 整理候选"=>"native-analysis",_=>"native-confirmed-action"};
+        await Wait(()=>
+        {
+            var state=JsonSerializer.SerializeToElement(page.GetType().GetProperty("ActionObservation")!.GetValue(page));
+            return page.IsLoaded&&page.XamlRoot is not null&&state.GetProperty("Ready").GetBoolean()&&!state.GetProperty("Busy").GetBoolean()&&Find<Button>(page,name).IsEnabled;
+        },"Current native page/action did not become ready and idle.");
+        Invoke(Find<Button>(page,name));await Dialog(window,approve,"确认本次操作");
+    }
     static async Task Dialog(MainWindow window,bool approve,string primary)
     {
         await Wait(()=>OpenDialogs(window).Any(),"Actual ContentDialog did not open.");var dialog=OpenDialogs(window).Single();

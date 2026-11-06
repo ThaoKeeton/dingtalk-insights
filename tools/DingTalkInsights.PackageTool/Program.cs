@@ -20,6 +20,8 @@ internal static class PackageTool
         {
             switch(args[0])
             {
+                case "test-maintenance":return await PackageMaintenanceTests.Run(args[1]);
+                case "maintenance":return await PackageMaintenance.Run(args[1..]);
                 case "verify-source":VerifySource(args[1]);break;
                 case "self-test":SelfTest();break;
                 case "stage":await Stage(args[1],args[2],args[3],args[4],args[5]);break;
@@ -33,7 +35,7 @@ internal static class PackageTool
     public static void VerifySource(string root)
     {
         using var doc=JsonDocument.Parse(File.ReadAllText(Path.Combine(root,"provenance.json")));
-        if(doc.RootElement.GetProperty("commit").GetString()!="6565180b17130f6d494978291df4138de3fdb0b4")throw new IOException("Unexpected platform pin.");
+        if(doc.RootElement.GetProperty("commit").GetString()!="82bd958e220aaf94ccdbf1ea68b0ec53b770706a")throw new IOException("Unexpected platform pin.");
         var files=doc.RootElement.GetProperty("files");
         foreach(var item in files.EnumerateObject())
         {
@@ -128,7 +130,7 @@ internal static class PackageTool
                 if(!File.Exists(Path.Combine(output,name+".dll")))throw new IOException("Missing required private assembly: "+name);
             File.WriteAllText(Path.Combine(output,"build-info.json"),JsonSerializer.Serialize(new
             {
-                productVersion="0.3.0",productCommit,platformCommit="6565180b17130f6d494978291df4138de3fdb0b4",apiVersion=1,sdk="10.0.403",appSdk="1.8.260921001",
+                productVersion="0.3.1",productCommit,platformCommit="82bd958e220aaf94ccdbf1ea68b0ec53b770706a",apiVersion=1,sdk="10.0.403",appSdk="1.8.260921001",
                 provenanceSha256=Hash(provenance),sharedIdentities=shared.Order(StringComparer.Ordinal).ToArray(),assemblies=Directory.EnumerateFiles(output,"*.dll",SearchOption.AllDirectories).Select(p=>new{path=Path.GetRelativePath(output,p),identity=AssemblyIdentity(p)??"native:"+Path.GetFileName(p)})
             },Json));
             File.WriteAllText(Path.Combine(output,"inventory.json"),JsonSerializer.Serialize(Inventory(output),Json));

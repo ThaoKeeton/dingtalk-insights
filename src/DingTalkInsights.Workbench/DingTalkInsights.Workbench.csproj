@@ -8,13 +8,15 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <GenerateDependencyFile>true</GenerateDependencyFile>
-    <Version>0.3.0</Version>
-    <WorkbenchSnapshotRoot Condition="'$(WorkbenchSnapshotRoot)' == ''">$(MSBuildThisFileDirectory)../../eng/vendor/workbench-6565180b</WorkbenchSnapshotRoot>
+    <Version>0.3.1</Version>
+    <WorkbenchSnapshotRoot Condition="'$(WorkbenchSnapshotRoot)' == ''">$(MSBuildThisFileDirectory)../../eng/vendor/workbench-82bd958e</WorkbenchSnapshotRoot>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
     <ProjectReference Include="$(WorkbenchSnapshotRoot)/src/Workbench.WinUI.Sdk/Workbench.WinUI.Sdk.csproj" Private="false" />
     <ProjectReference Include="../DingTalkInsights.Runtime/DingTalkInsights.Runtime.csproj" />
+    <Compile Remove="PluginSession.cs;NativeActionGate.cs;WorkbenchMonitorTask.cs" />
+    <ProjectReference Include="../DingTalkInsights.Workbench.Bridge/DingTalkInsights.Workbench.Bridge.csproj" />
     <None Update="plugin.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

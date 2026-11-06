@@ -62,7 +62,7 @@ GitHub Actions 的 [Windows native MVP](.github/workflows/windows.yml) 运行核
 
 后台策略、实现决策与测试清单见 [v0.2 背景监控设计](docs/background-monitoring.md)。
 
-## Workbench 原生插件 v0.3.0（等待原生 CI 验收）
+## Workbench 原生插件 v0.3.1（新 SDK 注册监控，等待本轮原生 CI 验收）
 
 本分支已提取 .NET 8 `DingTalkInsights.Runtime`，与独立应用共用 Core、DPAPI 格式和规范账本独占锁；初始化/导航不连接真实服务。真实数据仅在明确连接标准独立应用数据目录后使用同一个物理账本，保留费用预留、来源和未知尝试；凭据用途另行确认，不继承恢复授权。停用/退出一律取消并等实际工作退役，重新启用需要明确开始。
 

@@ -22,6 +22,14 @@ public sealed record ConnectionDraft
     public string DestinationName{get;init;}="";
     public string Task{get;init;}="";
 }
+public interface IMonitoringCoordinator
+{
+    Task<bool> StartAsync(MonitoringPreview preview,bool confirmed,CancellationToken cancellation=default);
+    Task StopAsync();
+    Task DeactivateAsync();
+    bool IsStopping{get;}
+    IDisposable Subscribe(Action changed);
+}
 public sealed class PluginSession(InsightController controller,string dataDirectory,IDataCipher cipher,CanonicalStoreLocation location,
     Func<CancellationToken,Task<Preferences>> load,Func<Preferences,Task> save)
 {
@@ -31,6 +39,8 @@ public sealed class PluginSession(InsightController controller,string dataDirect
     Task? retirement;
     readonly DateTimeOffset demoStart=DateTimeOffset.UtcNow.AddHours(-3);
     public InsightController Controller{get;}=controller;
+    public IMonitoringCoordinator? Monitoring{get;set;}
+    public NativeActionGate Actions{get;}=new();
     public int PendingPersistence{get{lock(sync)return pending.Count;}}
     public CanonicalStoreLocation Location{get;}=location;
     public Preferences Preferences{get;set;}=new();

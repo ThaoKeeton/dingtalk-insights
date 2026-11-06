@@ -11,7 +11,7 @@
     <SelfContained>true</SelfContained>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <PublishTrimmed>false</PublishTrimmed><PublishAot>false</PublishAot><PublishSingleFile>false</PublishSingleFile>
-    <WorkbenchSnapshotRoot Condition="'$(WorkbenchSnapshotRoot)' == ''">$(MSBuildThisFileDirectory)../../eng/vendor/workbench-6565180b</WorkbenchSnapshotRoot>
+    <WorkbenchSnapshotRoot Condition="'$(WorkbenchSnapshotRoot)' == ''">$(MSBuildThisFileDirectory)../../eng/vendor/workbench-82bd958e</WorkbenchSnapshotRoot>
     <ApplicationManifest>$(WorkbenchSnapshotRoot)/src/Workbench.App/app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
@@ -20,9 +20,8 @@
     <ProjectReference Include="$(WorkbenchSnapshotRoot)/src/Workbench.WinUI.Sdk/Workbench.WinUI.Sdk.csproj" />
     <!-- Separate source-linked production-control fixture; never reference/preload the business plugin DLL. -->
     <ProjectReference Include="../../src/DingTalkInsights.Runtime/DingTalkInsights.Runtime.csproj" />
+    <ProjectReference Include="../../src/DingTalkInsights.Workbench.Bridge/DingTalkInsights.Workbench.Bridge.csproj" />
     <Compile Include="../../src/DingTalkInsights.Workbench/InsightPage.cs" Link="ProductionAdapter/InsightPage.cs" />
-    <Compile Include="../../src/DingTalkInsights.Workbench/PluginSession.cs" Link="ProductionAdapter/PluginSession.cs" />
-    <Compile Include="../../src/DingTalkInsights.Workbench/NativeActionGate.cs" Link="ProductionAdapter/NativeActionGate.cs" />
     <ApplicationDefinition Include="$(WorkbenchSnapshotRoot)/src/Workbench.App/App.xaml" Link="App.xaml" />
     <Compile Include="$(WorkbenchSnapshotRoot)/src/Workbench.App/MainWindow.cs" Link="Presenter/MainWindow.cs" />
     <Compile Include="$(WorkbenchSnapshotRoot)/src/Workbench.App/ShellPages.cs" Link="Presenter/ShellPages.cs" />
