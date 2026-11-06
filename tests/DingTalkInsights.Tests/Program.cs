@@ -49,6 +49,7 @@ Add("补充完整性字段未知类型或真值均不完整",()=>{foreach(var fi
 
 tests.AddRange(ServiceTests.All());
 tests.AddRange(MonitorTests.All());
+tests.AddRange(BackgroundTests.All());
 var failed=0;
 foreach(var (name,test) in tests)try { test();Console.WriteLine("PASS "+name); }catch(Exception e){failed++;Console.WriteLine("FAIL "+name+": "+e.GetType().Name+" "+e.Message);}
 Console.WriteLine($"{tests.Count-failed}/{tests.Count} passed");

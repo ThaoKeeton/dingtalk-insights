@@ -6,7 +6,7 @@ using System.Text.Json.Serialization;
 
 namespace DingTalkInsights.Core;
 
-public sealed class SafetyException(string message) : Exception(message);
+public class SafetyException(string message) : Exception(message);
 
 public sealed record QueryScope(string Profile, string ConversationId, DateTimeOffset Start, DateTimeOffset End)
 {

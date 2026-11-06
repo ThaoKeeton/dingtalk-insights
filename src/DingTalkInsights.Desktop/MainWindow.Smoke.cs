@@ -34,8 +34,9 @@ public sealed partial class MainWindow
                 var next=MonitorEngine.NextScope(state,Scope(monitoring:true),DateTimeOffset.UtcNow);
                 Check(next.Start==origin.Start&&next.End-next.Start==TimeSpan.FromHours(1)&&monitorCancellation is null,"restart-bounded-gap-no-auto-monitor");
                 source.SelectedIndex=0;
-                File.WriteAllText(Path.Combine(output,"restart-smoke-result.json"),JsonSerializer.Serialize(new{success=true,steps,source="synthetic-only"},new JsonSerializerOptions{WriteIndented=true}));
-                Application.Current.Exit();return;
+                await CheckSyntheticRecoveryAsync(steps);
+                File.WriteAllText(Path.Combine(output,"restart-smoke-result.json"),JsonSerializer.Serialize(new{success=true,steps,source="synthetic-only",notificationArea=tray?.IsHealthy==true?"registered-and-exercised":"unavailable-fallback-only"},new JsonSerializerOptions{WriteIndented=true}));
+                await ExitApplicationAsync();return;
             }
             Navigate("settings");retention.Value=1;await InvokeAsync("save-settings");
             Check(state.RetentionDays==1,"native-demo-one-day-retention");Navigate("monitor");
@@ -55,6 +56,7 @@ public sealed partial class MainWindow
             Navigate("ask");await Task.Delay(100);await InvokeAsync("search-local");Check(candidates?.Messages.Count==2,"native-local-search");
             Navigate("monitor");await Task.Delay(100);await InvokeAsync("start-monitor");await Task.Delay(500);
             Check(monitorCancellation is not null,"native-monitor-start");
+            await CheckNativeBackgroundHostAsync(steps);
             Navigate("settings");await Task.Delay(100);
             Check(settingsPage is {IsEnabled:false}&&!new TextBoxAutomationPeer(profile).IsEnabled(),"native-monitor-disables-settings-keyboard");
             Navigate("results");history.SelectedIndex=-1;
@@ -83,7 +85,10 @@ public sealed partial class MainWindow
             Navigate("monitor");await InvokeAsync("start-monitor");
             if(stopButton is not null)Invoke(stopButton);
             if(monitorTask is not null)await monitorTask;
-            Check(monitorCancellation is null&&state.Messages.Count==4,"native-monitor-stop-dedup");
+            Check(monitorCancellation is null&&state.Messages.Count==4&&state.Recovery is null&&state.UserStopped,"native-monitor-stop-dedup");
+            Navigate("monitor");await InvokeAsync("start-monitor");
+            tray?.HandleCommand(2);if(monitorTask is not null)await monitorTask;
+            Check(monitorCancellation is null&&state.Recovery is null&&state.UserStopped,"native-tray-stop-command-revokes-recovery");
             Navigate("settings");theme.SelectedIndex=1;Root.RequestedTheme=ElementTheme.Light;await Task.Delay(100);await CaptureAsync("settings-light.png");
             theme.SelectedIndex=2;Root.RequestedTheme=ElementTheme.Dark;await Task.Delay(100);await CaptureAsync("settings-dark.png");
             Check(Root.ActualTheme==ElementTheme.Dark,"native-theme-switch");
@@ -95,6 +100,7 @@ public sealed partial class MainWindow
             source.SelectedIndex=0;await SaveSettingsAsync();
             Check(savedSettings.Profile=="smoke:identity"&&savedSettings.ConversationId=="smoke-conversation","demo-save-preserves-real-connection");
             state.Ingest(demoBatch with{Complete=false,Messages=Array.Empty<SourceMessage>(),Ledger=new Dictionary<string,JsonElement>{{"syntheticLimit",JsonSerializer.SerializeToElement("SYNTHETIC_LIMIT")}}});store.Save(state);
+            await SeedSyntheticRecoveryAsync(steps);
             var seed=store.Load();var expired=demoBatch.Messages[0]with{MessageId="expired-smoke-message",CreatedAt=DateTimeOffset.UtcNow.AddDays(-400)};
             seed.Messages[InsightState.MessageKey(demoBatch.Scope,expired)]=new StoredMessage(demoBatch.Scope.Profile,expired);
             seed.Reports.Add(new SavedReport(DateTimeOffset.UtcNow,demoBatch.Scope.Key,"EXPIRED_SMOKE_REPORT","expired synthetic quote",true,expired.CreatedAt));
@@ -102,7 +108,7 @@ public sealed partial class MainWindow
             try{File.WriteAllBytes(Path.Combine(dataRoot,"state.dpapi"),new DpapiCipher().Protect(seedBytes));}
             finally{System.Security.Cryptography.CryptographicOperations.ZeroMemory(seedBytes);}
             Check(IsDemo&&monitorCancellation is null,"restart-fixture-isolated-demo-default");
-            File.WriteAllText(Path.Combine(output,"smoke-result.json"),JsonSerializer.Serialize(new{success=true,steps,source="synthetic-only"},new JsonSerializerOptions{WriteIndented=true}));
+            File.WriteAllText(Path.Combine(output,"smoke-result.json"),JsonSerializer.Serialize(new{success=true,steps,source="synthetic-only",notificationArea=tray?.IsHealthy==true?"registered-and-exercised":"unavailable-fallback-only"},new JsonSerializerOptions{WriteIndented=true}));
             Environment.ExitCode=0;Application.Current.Exit();
         }
         catch(Exception e)
@@ -112,6 +118,85 @@ public sealed partial class MainWindow
         }
         void Check(bool success,string step){if(!success)throw new SafetyException("Smoke check failed: "+step);steps.Add(step);}
     }
+
+    async Task CheckNativeBackgroundHostAsync(List<string> steps)
+    {
+        var original=savedSettings;savedSettings=savedSettings with{CloseToTray=true};
+        try
+        {
+            if(tray?.IsHealthy==true)
+            {
+                if(!TryHideToTray()||AppWindow.IsVisible)throw new SafetyException("Smoke tray hide failed.");
+                tray.HandleCommand(1);if(!AppWindow.IsVisible)throw new SafetyException("Smoke tray show failed.");
+                tray.ReRegister();if(!tray.IsHealthy&&!AppWindow.IsVisible)throw new SafetyException("Smoke taskbar recovery failed.");
+                steps.Add("native-shell-tray-register-hide-open-reregister");
+            }
+            else steps.Add("native-shell-tray-unavailable-real-shell-path-not-tested");
+            var activations=activationCount;var requests=state.Requests;
+            using(var second=new System.Diagnostics.Process{StartInfo=new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!){UseShellExecute=false}})
+            {
+                second.StartInfo.ArgumentList.Add("--smoke-test");second.StartInfo.ArgumentList.Add("--activate-existing");
+                if(!second.Start())throw new SafetyException("Smoke second instance failed to start.");
+                await second.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(20));
+                if(second.ExitCode!=0||activationCount<=activations||!AppWindow.IsVisible||state.Requests!=requests)throw new SafetyException("Smoke activation did not redirect safely.");
+            }
+            steps.Add("native-second-launch-redirects-show-no-collector-or-spend");
+            tray?.Dispose();tray=NewTray(new UnavailableNotificationArea());
+            if(TryHideToTray()||!AppWindow.IsVisible)throw new SafetyException("Smoke unavailable tray hid the window.");
+            tray.ReRegister();if(!AppWindow.IsVisible)throw new SafetyException("Smoke failed tray recreation lost window.");
+            steps.Add("native-unavailable-tray-keeps-window-and-recreation-restores");
+        }
+        finally{savedSettings=original;tray?.Dispose();tray=NewTray();}
+    }
+    MonitoringConfiguration SyntheticRecoveryConfiguration()=>new("dws","smoke:recovery","smoke-recovery-conversation",DateTimeOffset.UtcNow.AddHours(-2),
+        Path.Combine(dataRoot,"synthetic-never-executed-dws.exe"),Guard.Hash("synthetic-executable"),false,new ModelSettings(),60,90,Guard.Hash("synthetic-credentials"));
+    MonitorSupervisor SyntheticSupervisor(MonitoringConfiguration config)=>new(engine,store,(scope,_)=>Task.FromResult(new MessageBatch(scope,
+        Array.Empty<SourceMessage>(),true,Array.Empty<string>(),new Dictionary<string,JsonElement>())),
+        (_,_,_)=>throw new SafetyException("Read-only synthetic recovery attempted model upload."),
+        _=>Task.FromResult<MonitoringConfiguration?>(config),clock:new SmokeRecoveryClock(),operationGate:operations);
+    async Task SeedSyntheticRecoveryAsync(List<string> steps)
+    {
+        var config=SyntheticRecoveryConfiguration();BackgroundPolicy.Approve(state,config,DateTimeOffset.UtcNow,confirmed:true);store.Save(state);
+        await AttachSupervisorAsync(SyntheticSupervisor(config),config,recover:true);
+        await AwaitSmokeCondition(()=>state.Coverage.ContainsKey(config.Scope(DateTimeOffset.UtcNow).Key));
+        await StopMonitoringAsync(revokeRecovery:false);
+        if(store.Load().Recovery?.Configuration.Fingerprint!=config.Fingerprint)throw new SafetyException("Synthetic exit lost approved recovery.");
+        steps.Add("native-synthetic-exit-retains-separately-approved-readonly-policy");
+    }
+    async Task CheckSyntheticRecoveryAsync(List<string> steps)
+    {
+        var config=state.Recovery?.Configuration??throw new SafetyException("Synthetic recovery fixture missing.");
+        if(config.Profile!="smoke:recovery"||config.UploadToModel)throw new SafetyException("Unsafe smoke recovery fixture.");
+        var prior=MonitorEngine.ResumeCursor(state,config.Scope(DateTimeOffset.UtcNow),DateTimeOffset.UtcNow);
+        var receipts=state.Receipts.Count;
+        await AttachSupervisorAsync(SyntheticSupervisor(config),config,recover:true);
+        supervisor?.Wake();await AwaitSmokeCondition(()=>state.Receipts.Count>receipts);
+        if(state.Receipts[^1].Scope.Start!=prior.AddMinutes(-2)||state.Requests!=0)throw new SafetyException("Synthetic recovery changed scope or uploaded.");
+        steps.Add("native-restart-synthetic-readonly-policy-resumes-same-bounded-scope");
+        await StopMonitoringAsync();
+        var stopped=store.Load();if(stopped.Recovery is not null||!stopped.UserStopped)throw new SafetyException("Native Stop did not persist revocation.");
+        var denied=SyntheticSupervisor(config);if(await denied.StartAsync(config,recover:true))throw new SafetyException("Stopped synthetic policy resurrected.");
+        steps.Add("native-restart-stopped-policy-zero-read-no-resurrection");
+        steps.Add("native-exit-command-cancels-and-retires-before-process-exit");
+    }
+    static async Task AwaitSmokeCondition(Func<bool> predicate)
+    {
+        var timeout=DateTimeOffset.UtcNow.AddSeconds(70);
+        while(!predicate()&&DateTimeOffset.UtcNow<timeout)await Task.Delay(20);
+        if(!predicate())throw new SafetyException("Synthetic background condition timed out.");
+    }
+    sealed class SmokeRecoveryClock:IMonitorClock
+    {
+        public DateTimeOffset UtcNow=>DateTimeOffset.UtcNow.AddMinutes(2);
+        public Task Delay(TimeSpan duration,CancellationToken cancellation)=>Task.Delay(duration,cancellation);
+    }
+    sealed class UnavailableNotificationArea:INotificationArea
+    {
+        public bool Add(IntPtr window,uint callback)=>false;
+        public bool Probe(IntPtr window)=>false;
+        public void Delete(IntPtr window){}
+    }
+
     static void Invoke(Microsoft.UI.Xaml.Controls.Button button)
     {
         var peer=FrameworkElementAutomationPeer.CreatePeerForElement(button)??new ButtonAutomationPeer(button);

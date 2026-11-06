@@ -28,3 +28,11 @@ Repair native: 已修复 CS0252 引用比较与设置页 FrameworkElement.IsEnab
 Fix round 1/5 — R1/R2: 历史选择事件本地捕获保留/保存失败，过期预览先失效，列表清理后同步刷新并抑制重入；失败选择不展示报告、不取消无关监控。原生合成 smoke 持有不允许删除共享的 state.dpapi 句柄，强制真实保存失败，检查过期/有效历史均不错误展示、监控存活、释放后可恢复选择，随后仍检查轮次失败暂停。
 
 R2 的三条最短一天保留回归 RED 73/76 → GREEN 76/76（Release），包含 2034-03-02 10:00 UTC+8 的范围、入库和本机搜索，以及午夜、早晨、夜间参考。模拟完整范围改为窗口捕获参考时间前的三小时；真实保留规则不变。原生正常 smoke 保存一天保留设置后执行模拟读取/搜索/开始。此轮精确提交的 Windows 编译与新增原生故障/一天保留检查仍待父任务 CI，不依赖此前通过记录。
+
+## v0.2 background-monitoring worktree — 2026-11-06
+
+Design/plan: `docs/background-monitoring.md`. Implemented a core exact-configuration recovery policy and serialized supervisor, conservative structured DWS retry classification, bounded persisted health/backoff, UTC budget deferral, AI suppression for uncertain/authentication failures, cancellation retirement, native notification-area lifecycle and App SDK single-instancing. Explicit Stop revokes recovery; Exit follows a separately approved policy. No service/autostart installation or real external calls.
+
+Release synthetic suite: 111/111 on Linux. Offline official DWS v1.0.67 help/schema check: exit 0. Native Windows publish, controls/DPAPI/background/restart/activation and extracted ZIP smoke are implemented but pending parent-run Windows CI at the fixed commit. Actual Shell_NotifyIcon exercise is reported separately from mandatory unavailable-tray fallback. v0.1 branch/artifact remains unchanged.
+
+Ruling: use stable DWS corp_id:user_id and app-vault ciphertext revision; official readonly status has no reliable same-identity login-generation field. OAuth expiry changes must not force periodic consent. Matching identity/readiness and structured read authorization failures remain authoritative; same-identity re-login detection is a documented limitation.

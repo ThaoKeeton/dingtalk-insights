@@ -67,6 +67,9 @@ public sealed record CollectionReceipt(QueryScope Scope,DateTimeOffset Collected
 public sealed class InsightState
 {
     public int Version {get;set;}=1;
+    public RecoveryPolicy? Recovery {get;set;}
+    public bool UserStopped {get;set;}
+    public SupervisorHealth Supervisor {get;set;}=new();
     public Dictionary<string,StoredMessage> Messages {get;set;}=[];
     public Dictionary<string,DateTimeOffset> Watermarks {get;set;}=[];
     public Dictionary<string,List<CoveredRange>> Coverage {get;set;}=[];
@@ -86,6 +89,8 @@ public sealed class InsightState
     public long OutputTokens {get;set;}
     public void Validate()
     {
+        if(Supervisor is null)throw new MonitoringFault(MonitorFailure.Configuration);
+        Supervisor.Validate();
         if(Version!=1||Messages is null||Watermarks is null||Coverage is null||Attempted is null||Reports is null||AttemptSources is null||Receipts is null||RetentionDays is <1 or >365||ReservedUsd<0||Requests<0||Messages.Count>50000)
             throw new SafetyException("本机数据版本或容量不受支持。");
     }
@@ -132,7 +137,7 @@ public sealed class InsightState
     public void EnsureScopeRetained(QueryScope scope)
     {
         scope.Validate();
-        if(scope.Start<RetentionCutoff)throw new SafetyException("本次读取或搜索早于本机保留期；请明确调整保留天数或查询起点后重试。");
+        if(scope.Start<RetentionCutoff)throw new MonitoringFault(MonitorFailure.Retention);
     }
     public void EnsureRetained(MessageBatch batch)
     {
@@ -140,6 +145,7 @@ public sealed class InsightState
     }
     public void ClearIndex()
     {
+        BackgroundPolicy.Revoke(this);
         Messages.Clear();Coverage.Clear();Watermarks.Clear();Attempted.Clear();AttemptSources.Clear();Reports.Clear();Receipts.Clear();Monitoring=null;LegacyAttemptsExpireAt=null;
         // Reservations and request/token counters are deliberately retained.
     }
@@ -149,7 +155,7 @@ public sealed class InsightState
         var day=now.UtcDateTime.ToString("yyyy-MM-dd");
         if(BudgetDay.Length>0&&string.CompareOrdinal(day,BudgetDay)<0)throw new SafetyException("本机 UTC 日期回退，费用预留未重置；请先核对系统时间。");
         if(BudgetDay!=day){BudgetDay=day;ReservedUsd=0;Requests=0;InputTokens=0;OutputTokens=0;}
-        if(Requests>=settings.MaxRequestsPerDay||ReservedUsd+reservation>settings.DailyBudgetUsd)throw new SafetyException("已达本日预算或请求上限；本次未请求模型。可在设置中调整，或等下个 UTC 日。");
+        if(Requests>=settings.MaxRequestsPerDay||ReservedUsd+reservation>settings.DailyBudgetUsd)throw new MonitoringFault(MonitorFailure.Budget);
         ReservedUsd+=reservation;Requests++;
     }
     public void Trim(DateTimeOffset now,int retentionDays)

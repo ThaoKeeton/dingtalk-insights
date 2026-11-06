@@ -59,6 +59,7 @@ public sealed class OpenAiClient(ConsentGate consent,HttpClient? http=null)
             using var request=new HttpRequestMessage(HttpMethod.Post,Endpoint){Content=new StringContent(body,Encoding.UTF8,"application/json")};
             request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",key);
             using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,deadline.Token);
+            if(response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)throw new MonitoringFault(MonitorFailure.ModelAuthorization);
             if(!response.IsSuccessStatusCode)throw new SafetyException($"OpenAI 返回 HTTP {(int)response.StatusCode}；未展示服务响应内容，也未自动重试。");
             var json=await HttpSafety.ReadAsync(response,512*1024,deadline.Token);
             using var doc=JsonDocument.Parse(json);var root=doc.RootElement;

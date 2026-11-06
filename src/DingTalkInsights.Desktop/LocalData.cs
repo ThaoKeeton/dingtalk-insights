@@ -34,6 +34,7 @@ internal sealed record Credentials(string OpenAiKey="",string WebhookUrl="",stri
 internal sealed class CredentialVault(string path,IDataCipher cipher)
 {
     public bool Exists=>File.Exists(path);
+    public string Revision=>File.Exists(path)?Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))):Guard.Hash("no-app-credentials");
     public Credentials Read()
     {
         if(!File.Exists(path))return new Credentials();
@@ -57,6 +58,8 @@ internal sealed record UserSettings
     public string WebhookName{get;init;}="";
     public string Theme{get;init;}="system";
     public ModelSettings Model{get;init;}=new();
+    public bool CloseToTray{get;init;}
+    public bool UploadToModel{get;init;}
     public int PollSeconds{get;init;}=300;
     public int RetentionDays{get;init;}=30;
 }

@@ -1,6 +1,6 @@
 namespace DingTalkInsights.Core;
 
-public sealed record TickResult(int Changed,int Stored,bool Complete,AnalysisReport? Report);
+public sealed record TickResult(int Changed,int Stored,bool Complete,AnalysisReport? Report,MonitorFailure ModelFailure=MonitorFailure.None,DateTimeOffset? ModelDeferredUntil=null);
 
 public sealed class MonitorEngine(InsightState state,IStateStore store)
 {
@@ -23,26 +23,32 @@ public sealed class MonitorEngine(InsightState state,IStateStore store)
         return initial with{Start=start,End=end};
     }
     public async Task<TickResult> TickAsync(QueryScope initial,Func<QueryScope,CancellationToken,Task<MessageBatch>> fetch,
-        Func<MessageBatch,string,CancellationToken,Task<ModelResult>>? analyze,ModelSettings model,int retentionDays,DateTimeOffset now,CancellationToken cancellation=default)
+        Func<MessageBatch,string,CancellationToken,Task<ModelResult>>? analyze,ModelSettings model,int retentionDays,DateTimeOffset now,CancellationToken cancellation=default,bool tolerateModelFailure=false,Func<CancellationToken,Task>? beforeModel=null)
     {
         await semaphore.WaitAsync(cancellation);
         try
         {
             state.Trim(now,retentionDays);
             var scope=NextScope(state,initial,now);state.EnsureScopeRetained(scope);var batch=await fetch(scope,cancellation);
+            cancellation.ThrowIfCancellationRequested();
             if(batch.Scope!=scope)throw new SafetyException("读取结果与授权范围不一致。");
-            var changed=state.Ingest(batch);store.Save(state);
+            var changed=state.Ingest(batch);Save();
             AnalysisReport? report=null;
-            if(analyze is not null)
+            var modelFailure=MonitorFailure.None;DateTimeOffset? deferred=null;
+            if(analyze is not null&&batch.Complete)
             {
                 var pending=state.Unanalyzed(initial with{End=now},40);
                 if(pending.Count>0)
                 {
                     var selected=batch with{Scope=initial with{End=now},Messages=pending,Complete=false,Warnings=batch.Warnings.Concat(["本次只整理尚未处理的增量候选，最多 40 条；不是全部历史结论。"]).ToArray()};
-                    report=(await AnalyzeLocked(selected,"发现可能的沟通难点，核对口径、验收和待确认事项，不进行人员评价。",model,analyze,now,cancellation)).Report;
+                    if(beforeModel is not null)await beforeModel(cancellation);
+                    cancellation.ThrowIfCancellationRequested();
+                    try{report=(await AnalyzeLocked(selected,"发现可能的沟通难点，核对口径、验收和待确认事项，不进行人员评价。",model,analyze,now,cancellation)).Report;}
+                    catch(MonitoringFault e)when(tolerateModelFailure&&e.Category==MonitorFailure.Budget){modelFailure=e.Category;deferred=new DateTimeOffset(now.UtcDateTime.Date.AddDays(1),TimeSpan.Zero);}
+                    catch(ModelAttemptFailure e)when(tolerateModelFailure){modelFailure=e.Category;}
                 }
             }
-            return new TickResult(changed,state.Messages.Count,batch.Complete,report);
+            return new TickResult(changed,state.Messages.Count,batch.Complete,report,modelFailure,deferred);
         }
         finally{semaphore.Release();}
     }
@@ -56,18 +62,27 @@ public sealed class MonitorEngine(InsightState state,IStateStore store)
     private async Task<ModelResult> AnalyzeLocked(MessageBatch batch,string task,ModelSettings model,
         Func<MessageBatch,string,CancellationToken,Task<ModelResult>> analyze,DateTimeOffset now,CancellationToken cancellation)
     {
+        cancellation.ThrowIfCancellationRequested();
         var request=OpenAiClient.BuildRequest(batch,task,model);
         if(!batch.IsDemo)state.Reserve(model,OpenAiClient.Reservation(request,model),now);
         state.MarkAttempted(batch.Scope,batch.Messages);
         // Commit the reservation and attempt BEFORE HTTP: a crash must not release them.
-        store.Save(state);
+        Save();
         state.EnsureRetained(batch);
-        var result=await analyze(batch,task,cancellation);
-        if(result.Report.Batch.Fingerprint!=batch.Fingerprint)throw new SafetyException("整理结果不属于本批消息。");
+        cancellation.ThrowIfCancellationRequested();
+        ModelResult result;
+        try{result=await analyze(batch,task,cancellation);cancellation.ThrowIfCancellationRequested();
+            if(result.Report.Batch.Fingerprint!=batch.Fingerprint)throw new ModelAttemptFailure(MonitorFailure.ModelUnknown);}
+        catch(OperationCanceledException)when(cancellation.IsCancellationRequested){throw;}
+        catch(MonitoringFault e)when(e.Category is MonitorFailure.Configuration or MonitorFailure.Storage or MonitorFailure.Retention){throw;}
+        catch(Exception e){throw new ModelAttemptFailure(e is MonitoringFault{Category:MonitorFailure.ModelAuthorization}?MonitorFailure.ModelAuthorization:MonitorFailure.ModelUnknown);}
         state.InputTokens+=result.InputTokens;state.OutputTokens+=result.OutputTokens;
         state.Reports.Add(new SavedReport(now,batch.Scope.Key,task,ReportRenderer.Markdown(result.Report),batch.IsDemo,batch.Messages.Min(m=>m.CreatedAt)));
-        state.Reports=state.Reports.TakeLast(100).ToList();store.Save(state);return result;
+        state.Reports=state.Reports.TakeLast(100).ToList();Save();return result;
     }
+    void Save(){try{store.Save(state);}catch(Exception){throw new MonitoringFault(MonitorFailure.Storage);}}
+    sealed class ModelAttemptFailure(MonitorFailure category):SafetyException(MonitorNotices.For(category)){public MonitorFailure Category{get;}=category;}
+
 }
 
 public static class LocalSearch
