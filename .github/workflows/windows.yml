@@ -1,0 +1,79 @@
+name: Windows native MVP
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet run --project tests/DingTalkInsights.Tests -c Release
+  windows:
+    needs: core
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Core contracts on Windows with synthetic data
+        run: dotnet run --project tests/DingTalkInsights.Tests -c Release
+      - name: Publish self-contained native Windows application
+        run: dotnet publish src/DingTalkInsights.Desktop/DingTalkInsights.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -o dist/app
+      - name: Validate real native controls and Windows DPAPI
+        shell: pwsh
+        run: |
+          $process = Start-Process "$PWD/dist/app/DingTalkInsights.exe" -ArgumentList '--smoke-test' -PassThru
+          if (-not $process.WaitForExit(90000)) {
+            Stop-Process -Id $process.Id -Force
+            throw 'Native UI smoke timed out'
+          }
+          if (Test-Path dist/app/smoke-output/smoke-result.json) { Get-Content dist/app/smoke-output/smoke-result.json }
+          if ($process.ExitCode -ne 0) { throw "Native UI smoke failed: $($process.ExitCode)" }
+          $result = Get-Content dist/app/smoke-output/smoke-result.json | ConvertFrom-Json
+          if (-not $result.success -or $result.steps.Count -lt 12) { throw 'Incomplete native UI evidence' }
+          Copy-Item dist/app/smoke-output dist/ui-evidence -Recurse
+          Remove-Item dist/ui-evidence/isolated-data -Recurse -Force
+          Remove-Item dist/app/smoke-output -Recurse -Force
+      - name: Package and verify extracted application
+        shell: pwsh
+        run: |
+          foreach ($file in @('DingTalkInsights.exe','DingTalkInsights.dll','DingTalkInsights.pri','coreclr.dll','hostfxr.dll','THIRD_PARTY_NOTICES.md')) {
+            if (-not (Test-Path "dist/app/$file")) { throw "Package missing $file" }
+          }
+          @{sourceCommit=(git rev-parse HEAD); version='0.1.0'; platform='win-x64'; framework='WinUI 3'} | ConvertTo-Json | Set-Content dist/app/build-info.json -Encoding utf8
+          Compress-Archive dist/app/* dist/DingTalkInsights-win-x64.zip
+          $hash = (Get-FileHash dist/DingTalkInsights-win-x64.zip -Algorithm SHA256).Hash
+          "$hash  DingTalkInsights-win-x64.zip" | Set-Content dist/DingTalkInsights-win-x64.zip.sha256
+          Expand-Archive dist/DingTalkInsights-win-x64.zip dist/extracted
+          $process = Start-Process "$PWD/dist/extracted/DingTalkInsights.exe" -ArgumentList '--smoke-test' -PassThru
+          if (-not $process.WaitForExit(90000)) { Stop-Process -Id $process.Id -Force; throw 'Extracted native UI smoke timed out' }
+          if ($process.ExitCode -ne 0) { throw 'Extracted application failed native smoke' }
+          Copy-Item dist/extracted/smoke-output/smoke-result.json dist/ui-evidence/extracted-smoke-result.json
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: DingTalkInsights-Windows-x64
+          path: |
+            dist/DingTalkInsights-win-x64.zip
+            dist/DingTalkInsights-win-x64.zip.sha256
+            dist/ui-evidence/
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: native-failure-evidence
+          path: |
+            dist/app/smoke-output/
+            dist/extracted/smoke-output/
+            dist/ui-evidence/
+          retention-days: 7

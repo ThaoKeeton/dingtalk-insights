@@ -1,0 +1,26 @@
+<Window x:Class="DingTalkInsights.Desktop.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="DingTalk Insights · 钉钉信息整理">
+  <Window.SystemBackdrop><MicaBackdrop /></Window.SystemBackdrop>
+  <Grid x:Name="Root" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+    <NavigationView x:Name="Navigation" IsBackButtonVisible="Collapsed" IsSettingsVisible="False" OpenPaneLength="220" PaneDisplayMode="Auto" SelectionChanged="NavigationChanged">
+      <NavigationView.PaneHeader><StackPanel Margin="16,20,8,20" Spacing="6"><TextBlock Text="DingTalk Insights" FontWeight="SemiBold" FontSize="18" /><TextBlock Text="消息有来源，结论待核实" FontSize="12" Opacity="0.65" /></StackPanel></NavigationView.PaneHeader>
+      <NavigationView.MenuItems>
+        <NavigationViewItem Content="持续检查" Tag="monitor" Icon="View" />
+        <NavigationViewItem Content="按需搜集整理" Tag="ask" Icon="Find" />
+        <NavigationViewItem Content="结果与发送" Tag="results" Icon="Document" />
+        <NavigationViewItemSeparator />
+        <NavigationViewItem Content="连接与设置" Tag="settings" Icon="Setting" />
+        <NavigationViewItem Content="接入与范围说明" Tag="help" Icon="Help" />
+      </NavigationView.MenuItems>
+      <Grid Padding="28,20,28,16" RowSpacing="16">
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <StackPanel Spacing="6"><TextBlock x:Name="PageTitle" Text="持续检查" Style="{StaticResource TitleTextBlockStyle}" /><TextBlock Text="v0.1.0 · Windows 本机应用" Opacity="0.6" /></StackPanel>
+        <ContentControl x:Name="PageHost" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
+        <Border Grid.Row="2" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="0,12,0,0">
+          <StackPanel Spacing="8"><ProgressBar x:Name="BusyBar" IsIndeterminate="True" Visibility="Collapsed" /><TextBlock x:Name="StatusText" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Text="模拟模式；未读取或发送真实数据。" /></StackPanel>
+        </Border>
+      </Grid>
+    </NavigationView>
+  </Grid>
+</Window>

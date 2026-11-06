@@ -1,0 +1,30 @@
+using System.Net;
+using System.Text;
+using System.Text.Json;
+using DingTalkInsights.Core;
+
+internal static class ServiceTests
+{
+    static void Assert(bool b){if(!b)throw new Exception("assertion failed");}
+    static void Denied(Action f){try{f();}catch(SafetyException){return;}throw new Exception("expected SafetyException");}
+    public static IEnumerable<(string,Action)> All()
+    {
+        yield return ("单次许可不能重复使用",()=>{var g=new ConsentGate();var t=g.Issue(ExternalAction.Read,"a");g.Consume(t,ExternalAction.Read,"a");Denied(()=>g.Consume(t,ExternalAction.Read,"a"));});
+        yield return ("改变目标、内容或操作使许可失效",()=>{var g=new ConsentGate();var t=g.Issue(ExternalAction.Send,"a");Denied(()=>g.Consume(t,ExternalAction.Send,"b"));Denied(()=>g.Consume(t,ExternalAction.Send,"a"));});
+        yield return ("OpenAI 请求隔离不可信正文、禁用存储与工具",()=>{var body=OpenAiClient.BuildRequest(Demo.CreateBatch(),"整理登录问题",new ModelSettings());using var d=JsonDocument.Parse(body);var r=d.RootElement;Assert(!r.GetProperty("store").GetBoolean()&&r.GetProperty("tool_choice").GetString()=="none"&&r.GetProperty("service_tier").GetString()=="default");Assert(r.GetProperty("input")[0].GetProperty("role").GetString()=="developer"&&r.GetProperty("input")[1].GetProperty("role").GetString()=="user");Assert(r.GetProperty("text").GetProperty("format").GetProperty("strict").GetBoolean());});
+        yield return ("OpenAI 未授权时不产生 HTTP 请求",()=>{var h=new Handler(_=>Response("{}"));var g=new ConsentGate();var client=new OpenAiClient(g,new HttpClient(h));Denied(()=>client.AnalyzeAsync("SYNTHETIC_KEY",Demo.CreateBatch(),"task",new ModelSettings(),null).GetAwaiter().GetResult());Assert(h.Calls==0);});
+        yield return ("OpenAI 完整响应通过证据校验",()=>{var b=Demo.CreateBatch();var result=JsonSerializer.Serialize(new{issues=new[]{new{title="待复测",summary="还需验证",status="resolved",communication="口径待核实",nextStep="复测",evidence=new[]{new{messageId="demo-2",quote=b.Messages[1].Text}}}},pendingQuestions=Array.Empty<string>()});var api=JsonSerializer.Serialize(new{status="completed",usage=new{input_tokens=500,output_tokens=100},output=new[]{new{type="message",content=new[]{new{type="output_text",text=result}}}}});var g=new ConsentGate();var c=new OpenAiClient(g,new HttpClient(new Handler(_=>Response(api))));var m=new ModelSettings();var t=g.Issue(ExternalAction.Analyze,OpenAiClient.Fingerprint(b,"task",m));var r=c.AnalyzeAsync("SYNTHETIC_KEY",b,"task",m,t).GetAwaiter().GetResult();Assert(r.Report.Issues[0].Status==IssueStatus.PendingVerification&&r.InputTokens==500);});
+        yield return ("OpenAI HTTP 错误不回显服务响应或密钥",()=>{var b=Demo.CreateBatch();var m=new ModelSettings();var g=new ConsentGate();var h=new Handler(_=>new HttpResponseMessage(HttpStatusCode.Unauthorized){Content=new StringContent("SYNTHETIC_SECRET")});var c=new OpenAiClient(g,new HttpClient(h));try{c.AnalyzeAsync("SYNTHETIC_SECRET",b,"task",m,g.Issue(ExternalAction.Analyze,OpenAiClient.Fingerprint(b,"task",m))).GetAwaiter().GetResult();throw new Exception("expected error");}catch(SafetyException e){Assert(!e.Message.Contains("SYNTHETIC_SECRET")&&e.Message.Contains("401"));}Assert(h.Calls==1);});
+        yield return ("Webhook 拒绝外部主机、HTTP 和附加路径",()=>{foreach(var url in new[]{"http://oapi.dingtalk.com/robot/send?access_token=x","https://evil.example/robot/send?access_token=x","https://oapi.dingtalk.com/robot/send/other?access_token=x","https://oapi.dingtalk.com/robot/send?access_token=a&access_token=b"})Denied(()=>new WebhookTarget("目标",url,"").Validate());});
+        yield return ("Webhook 没有许可时不发送",()=>{var h=new Handler(_=>Response("{}"));var c=new WebhookClient(new ConsentGate(),new HttpClient(h));Denied(()=>c.SendAsync(new WebhookTarget("测试群","https://oapi.dingtalk.com/robot/send?access_token=synthetic",""),"内容",null).GetAwaiter().GetResult());Assert(h.Calls==0);});
+        yield return ("Webhook 发送包括签名且禁止全员提醒",()=>{string? url=null,body=null;var h=new Handler(r=>{url=r.RequestUri!.ToString();body=r.Content!.ReadAsStringAsync().Result;return Response("{\"errcode\":0,\"errmsg\":\"ok\"}");});var g=new ConsentGate();var c=new WebhookClient(g,new HttpClient(h));var target=new WebhookTarget("测试群","https://oapi.dingtalk.com/robot/send?access_token=synthetic","SYNTHETIC_SIGNING_SECRET");var content="测试内容";var r=c.SendAsync(target,content,g.Issue(ExternalAction.Send,WebhookClient.Fingerprint(target,content))).GetAwaiter().GetResult();Assert(r==DeliveryStatus.Sent&&url!.Contains("timestamp=")&&url.Contains("sign=")&&body!.Contains("\"isAtAll\":false"));});
+        yield return ("Webhook 超时视为不确定且不重试",()=>{var h=new Handler(_=>throw new TaskCanceledException());var g=new ConsentGate();var c=new WebhookClient(g,new HttpClient(h));var t=new WebhookTarget("测试群","https://oapi.dingtalk.com/robot/send?access_token=synthetic","");var r=c.SendAsync(t,"内容",g.Issue(ExternalAction.Send,WebhookClient.Fingerprint(t,"内容"))).GetAwaiter().GetResult();Assert(r==DeliveryStatus.Unknown&&h.Calls==1);});
+        yield return ("DWS 命令绑定单一身份、会话、范围且无 shell",()=>{var s=Demo.CreateBatch().Scope;var a=DwsClient.MessageArguments(s);Assert(a.Contains("--profile="+s.Profile)&&a.Contains("--conversation-id="+s.ConversationId)&&a.Contains("--page-all")&&!a.Any(x=>x.StartsWith("--yes")));});
+    }
+    internal static HttpResponseMessage Response(string body)=>new(HttpStatusCode.OK){Content=new StringContent(body,Encoding.UTF8,"application/json")};
+    sealed class Handler(Func<HttpRequestMessage,HttpResponseMessage> callback):HttpMessageHandler
+    {
+        public int Calls {get;private set;}
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token){Calls++;return Task.FromResult(callback(request));}
+    }
+}
