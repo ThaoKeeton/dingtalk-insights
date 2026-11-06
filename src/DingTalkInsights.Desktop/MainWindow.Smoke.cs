@@ -37,6 +37,8 @@ public sealed partial class MainWindow
                 File.WriteAllText(Path.Combine(output,"restart-smoke-result.json"),JsonSerializer.Serialize(new{success=true,steps,source="synthetic-only"},new JsonSerializerOptions{WriteIndented=true}));
                 Application.Current.Exit();return;
             }
+            Navigate("settings");retention.Value=1;await InvokeAsync("save-settings");
+            Check(state.RetentionDays==1,"native-demo-one-day-retention");Navigate("monitor");
             await CaptureAsync("monitor.png");
             await InvokeAsync("read-once");
             Check(candidateBox.Text.Contains("demo-2")&&candidateBox.IsLoaded,"native-read-preview");
@@ -55,6 +57,21 @@ public sealed partial class MainWindow
             Check(monitorCancellation is not null,"native-monitor-start");
             Navigate("settings");await Task.Delay(100);
             Check(settingsPage is {IsEnabled:false}&&!new TextBoxAutomationPeer(profile).IsEnabled(),"native-monitor-disables-settings-keyboard");
+            Navigate("results");history.SelectedIndex=-1;
+            var keptReports=state.Reports.Count;
+            state.Reports.Add(new SavedReport(DateTimeOffset.UtcNow,demoBatch.Scope.Key,"EXPIRED_HISTORY_SELECTION","must not display expired history",true,DateTimeOffset.UtcNow.AddDays(-2)));
+            RefreshHistory();
+            // Windows denies atomic replacement while a destination handle omits FileShare.Delete.
+            using(var blockedState=new FileStream(Path.Combine(dataRoot,"state.dpapi"),FileMode.Open,FileAccess.Read,FileShare.Read))
+            {
+                history.SelectedIndex=0;await Task.Delay(50);
+                Check(monitorCancellation is {IsCancellationRequested:false}&&markdown.Length==0&&history.SelectedIndex==-1
+                    &&history.Items.Count==keptReports&&!state.Reports.Any(r=>r.Task=="EXPIRED_HISTORY_SELECTION"),"native-history-save-failure-prunes-keeps-monitor");
+                history.SelectedIndex=0;await Task.Delay(50);
+                Check(monitorCancellation is {IsCancellationRequested:false}&&markdown.Length==0&&history.SelectedIndex==-1,"native-retained-history-save-failure-not-displayed");
+            }
+            history.SelectedIndex=0;
+            Check(markdown.Contains("demo-2")&&monitorCancellation is {IsCancellationRequested:false},"native-history-recovers-after-save-failure");
             Navigate("ask");var oldKeywords=keywords.Text;keywords.Text="";
             await InvokeAsync("search-local");keywords.Text=oldKeywords;
             Check(monitorCancellation is {IsCancellationRequested:false},"native-manual-validation-keeps-monitor");

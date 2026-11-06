@@ -6,9 +6,9 @@ public static class Demo
 {
     public static MessageBatch CreateBatch(DateTimeOffset? reference=null)
     {
-        // Use the previous complete UTC+8 day, captured once by the caller for a stable app session.
-        var day=(reference??DateTimeOffset.UtcNow).ToOffset(TimeSpan.FromHours(8)).Date.AddDays(-1);
-        var start=new DateTimeOffset(day.AddHours(9),TimeSpan.FromHours(8));
+        // Keep the complete synthetic scope within the minimum one-day retention.
+        // The window captures this reference once so previews and monitoring share the same messages.
+        var start=(reference??DateTimeOffset.UtcNow).ToOffset(TimeSpan.FromHours(8)).AddHours(-3);
         var scope=new QueryScope("demo:local","demo-project",start,start.AddHours(3));
         var data=new {contractVersion="im.message-list.v1",messages=new[]{
             new{messageId="demo-1",conversationId=scope.ConversationId,senderId="demo-a",sender="模拟测试甲",text="登录偶发超时，发布前需要确认原因。",createTime=start.AddMinutes(10),messageType="text"},

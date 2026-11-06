@@ -29,7 +29,7 @@ public sealed partial class MainWindow:Window
     UserSettings savedSettings=new();
     readonly MessageBatch demoBatch=Demo.CreateBatch();
     string markdown="";
-    bool displayedDemo=true,smokeStarted;
+    bool displayedDemo=true,smokeStarted,refreshingHistory;
     readonly bool smoke=Environment.GetCommandLineArgs().Contains("--smoke-test");
 
     readonly ComboBox source=new(){Header="数据来源",ItemsSource=new[]{"模拟数据（不连接服务）","官方 DWS（本机已登录身份）"},SelectedIndex=0};
@@ -78,7 +78,7 @@ public sealed partial class MainWindow:Window
         conversations.SelectionChanged+=(_,_)=>{if(conversations.SelectedItem is Conversation c)conversation.Text=c.ConversationId;};
         theme.SelectionChanged+=(_,_)=>Root.RequestedTheme=theme.SelectedIndex switch{1=>ElementTheme.Light,2=>ElementTheme.Dark,_=>ElementTheme.Default};
         source.SelectionChanged+=(_,_)=>{if(source.SelectedIndex==0)SetDemoFields();else LoadConnectionFields();};
-        history.SelectionChanged+=(_,_)=>{if(history.SelectedItem is HistoryItem item){EnforceRetention();if(!state.Reports.Contains(item.Report))return;currentReport=null;displayedSavedReport=item.Report;markdown=item.Report.Markdown;displayedDemo=item.Report.IsDemo;reportBox.Text=markdown;issuePicker.ItemsSource=null;}};
+        history.SelectionChanged+=HistorySelectionChanged;
         RefreshHistory();if(history.Items.Count>0)history.SelectedIndex=0;
         Navigation.SelectedItem=Navigation.MenuItems[0];
         Closed+=(_,_)=>{monitorCancellation?.Cancel();active?.Cancel();store.Dispose();};
@@ -135,11 +135,15 @@ public sealed partial class MainWindow:Window
     }
     void EnforceRetention()
     {
-        state.Trim(DateTimeOffset.UtcNow,state.RetentionDays);store.Save(state);
+        var previousReports=state.Reports;
+        state.Trim(DateTimeOffset.UtcNow,state.RetentionDays);
+        // Invalidate expired in-memory content before persistence, even when the write fails.
         if(candidates is not null&&candidates.Messages.Any(m=>m.CreatedAt<state.RetentionCutoff)){candidates=null;candidateBox.Text="候选正文已到保留期，请重新读取或搜索。";}
         if((currentReport is not null&&currentReport.Batch.Messages.Any(m=>m.CreatedAt<state.RetentionCutoff))
             ||(displayedSavedReport is not null&&!state.Reports.Contains(displayedSavedReport)))
         {currentReport=null;displayedSavedReport=null;markdown="";reportBox.Text="结果引用的来源已到保留期，已清理当前预览。";issuePicker.ItemsSource=null;}
+        if(!state.Reports.SequenceEqual(previousReports))RefreshHistory();
+        store.Save(state);
     }
     static DateTimeOffset ParseTime(string text)
     {
@@ -274,8 +278,36 @@ public sealed partial class MainWindow:Window
         if(startButton is not null)startButton.IsEnabled=!running;if(stopButton is not null)stopButton.IsEnabled=running||active is not null;
         if(settingsPage is not null)settingsPage.IsEnabled=!running;since.IsEnabled=!running;interval.IsEnabled=!running;enableAi.IsEnabled=!running;
     }
-    void SetReport(AnalysisReport report){currentReport=report;displayedSavedReport=null;markdown=ReportRenderer.Markdown(report);displayedDemo=report.Batch.IsDemo;reportBox.Text=markdown;issuePicker.ItemsSource=report.Issues;if(report.Issues.Count>0)issuePicker.SelectedIndex=0;RefreshHistory();}
-    void RefreshHistory(){history.ItemsSource=state.Reports.AsEnumerable().Reverse().Select(r=>new HistoryItem(r)).ToArray();}
+    void SetReport(AnalysisReport report){currentReport=report;displayedSavedReport=null;markdown=ReportRenderer.Markdown(report);displayedDemo=report.Batch.IsDemo;reportBox.Text=markdown;issuePicker.ItemsSource=report.Issues;if(report.Issues.Count>0)issuePicker.SelectedIndex=0;RefreshHistory(clearSelection:true);}
+    void RefreshHistory(bool clearSelection=false)
+    {
+        var selected=clearSelection?null:(history.SelectedItem as HistoryItem)?.Report;
+        refreshingHistory=true;
+        try
+        {
+            var items=state.Reports.AsEnumerable().Reverse().Select(r=>new HistoryItem(r)).ToArray();
+            history.ItemsSource=items;history.SelectedItem=items.FirstOrDefault(i=>i.Report==selected);
+        }
+        finally{refreshingHistory=false;}
+    }
+    void HistorySelectionChanged(object sender,SelectionChangedEventArgs args)
+    {
+        if(refreshingHistory||history.SelectedItem is not HistoryItem item)return;
+        try
+        {
+            EnforceRetention();
+            if(!state.Reports.Contains(item.Report)){RefreshHistory();return;}
+            currentReport=null;displayedSavedReport=item.Report;markdown=item.Report.Markdown;displayedDemo=item.Report.IsDemo;
+            reportBox.Text=markdown;issuePicker.ItemsSource=null;
+        }
+        catch(Exception e)
+        {
+            // Viewing history is a manual action: storage failure must not escape XAML or stop monitoring.
+            currentReport=null;displayedSavedReport=null;markdown="";reportBox.Text="历史结果未能载入，请检查本机存储后重新选择。";issuePicker.ItemsSource=null;
+            RefreshHistory(clearSelection:true);
+            StatusText.Text=e is SafetyException?e.Message:"历史结果未能载入；未展示服务响应或凭据，请检查本机存储。";
+        }
+    }
     async Task ConfirmResolvedAsync()
     {
         var report=currentReport??throw new SafetyException("历史文本不可直接改变状态，请重新核对当前结构化结果。");var index=issuePicker.SelectedIndex;
