@@ -66,6 +66,7 @@ public sealed partial class InsightController
         }
     }
     public Task StopMonitoringAsync()=>BeginRetirement(disconnect:false,terminal:false);
+    public Task RevokeCredentialsAsync()=>BeginRetirement(disconnect:false,terminal:false,revokeCredentials:true);
     public Task DisconnectAsync()=>BeginRetirement(disconnect:true,terminal:false);
     public Task DeactivateAsync()
     {
@@ -77,13 +78,14 @@ public sealed partial class InsightController
         }
     }
     void OnLifetimeCancelled()=>_=DeactivateAsync();
-    Task BeginRetirement(bool disconnect,bool terminal)
+    Task BeginRetirement(bool disconnect,bool terminal,bool revokeCredentials=false)
     {
         Operation[] retiring;MonitorSupervisor? monitor;
         lock(sync)
         {
             if(deactivated&&!terminal)return deactivation;
             if(terminal)deactivated=true;
+            if(revokeCredentials||disconnect||terminal)ClearCredentialUse();
             generation++;stopCount++;previews.Clear();retiring=pending.ToArray();monitor=supervisor;
         }
         foreach(var operation in retiring)try{operation.Source.Cancel();}catch(ObjectDisposedException){}catch(AggregateException){}

@@ -83,14 +83,18 @@ internal sealed class InsightPage:UserControl
         conversations.SelectionChanged+=(_,_)=>{if(!rendering&&conversations.SelectedItem is ConversationRow row)conversation.Text=row.Value.ConversationId;};
         Add(Action("连接标准独立版账本…","DTI 连接标准账本",Connect),Action("断开并等待释放","DTI 断开",async()=>{await Work(controller.DisconnectAsync);}));
         body.Children.Add(Text("连接同一物理 state.dpapi 与旧版锁；不会复制活动账本、强制解锁或导入恢复授权。断开/停用并等候退役后，可回独立版明确开始。旧 0.2 的人工发送无法识别发送侧账，回滚期间请勿发送。"));
-        credentialLocation.Items.Add("插件本机 DPAPI 凭据");credentialLocation.Items.Add("已连接标准独立版 DPAPI 凭据");credentialLocation.SelectedIndex=0;
+        if(controller.HostCredentialsAvailable)credentialLocation.Items.Add(new CredentialChoice(CredentialLocation.Host,"Workbench 宿主加密凭据"));
+        credentialLocation.Items.Add(new CredentialChoice(CredentialLocation.Plugin,"插件本机 DPAPI 凭据"));
+        credentialLocation.Items.Add(new CredentialChoice(CredentialLocation.ConnectedStore,"已连接标准独立版 DPAPI 凭据（只读）"));credentialLocation.SelectedIndex=0;
         Add(credentialLocation,useModel,useWebhook,Action("仅批准所选凭据用途…","DTI 批准凭据用途",UseCredentials));
-        body.Children.Add(Text("输入框始终从空值开始，既有值永不回显。保存新值与批准用途是两次独立操作；保存会替换插件本机三个值并撤销旧批准，不改独立版保险箱。"));
+        Add(Action("撤销凭据用途并停止工作","DTI 撤销凭据用途",RevokeCredentials,stop:true));
+        body.Children.Add(Text("输入框始终从空值开始，既有值永不回显。保存会替换所选宿主或插件来源的三个字段；空字段删除，旧用途批准撤销，独立版保险箱只读。宿主完整保存中断或单独修改字段后，该批次不可用，请重新输入并完整保存。保存与批准用途是两次独立操作。"));
         Add(key,webhook,secret,Action("加密保存新输入凭据…","DTI 保存新凭据",SaveCredentials));
+        Add(Action("删除所选来源的凭据…","DTI 删除所选凭据",DeleteCredentials));
         Add(Action("清理本机内容索引…","DTI 清理索引",async()=>
         {if(await Confirm("清理索引","仅清理当前连接的本机消息、结果与断点；当日预算、请求和发送尝试保留。不会修改钉钉原始聊天。"))await Work(()=>controller.ClearIndexAsync(true));}));
         body.Children.Add(Text("帮助与限制",20));
-        body.Children.Add(Text("监控为官方 DWS 会话消息轮询，不是桌面捕获。只读模式不调用模型；未知/不完整来源不会推进完整断点。模型失败、预算延后、权限和迁移失败均显示安全类别。关闭/睡眠/注销期间不保证实时采集。宿主 0.2 注册一个须经插件预览确认的监控任务，不允许宿主通用开始或自动恢复。停止监控保留明确连接与已批准用途；停用/退出彻底退役，再次开始须新确认。已声明宿主密钥元数据，本版仍仅支持插件/标准账本本机 DPAPI 凭据。宿主包服务须重启前维护；当前宿主通用管理界面未接入，程序集保持加载至退出。人工 Webhook 结果不确定时不自动重发，重发可能重复。费用单价是用户输入的本地估算，不是实时报价。"));
+        body.Children.Add(Text("监控为官方 DWS 会话消息轮询，不是桌面捕获。只读模式不调用模型；未知/不完整来源不会推进完整断点。模型失败、预算延后、权限和迁移失败均显示安全类别。关闭/睡眠/注销期间不保证实时采集。宿主 0.2 注册一个须经插件预览确认的监控任务，不允许宿主通用开始或自动恢复。停止监控保留明确连接与已批准用途；撤销凭据用途会停止所有工作并保留账本；停用/退出彻底退役，再次开始须新确认。宿主凭据不可用时须显式选择其他来源，不自动切换。宿主包服务须重启前维护；程序集保持加载至退出。人工 Webhook 结果不确定时不自动重发，重发可能重复。费用单价是用户输入的本地估算，不是实时报价。"));
     }
     // Safe metadata only: never return entered values, content, credentials or notice text.
     public object ActionObservation=>new{Ready=loaded&&rendered&&binding is not null,Loaded=loaded,Rendered=rendered,Attachment=attachment,
@@ -212,18 +216,33 @@ internal sealed class InsightPage:UserControl
     }
     async Task UseCredentials()
     {
-        var location=credentialLocation.SelectedIndex==0?CredentialLocation.Plugin:CredentialLocation.ConnectedStore;
+        var location=SelectedCredentialLocation;
         var purposes=(useModel.IsChecked==true?CredentialUse.Model:CredentialUse.None)|(useWebhook.IsChecked==true?CredentialUse.Webhook:CredentialUse.None);
         if(await Confirm("单独批准凭据用途",$"来源：{location}；仅用于：{purposes}\n现有密文不会回显或复制到另一保险箱。保存新值、连接、信任插件和开始监控均不能替代本次批准。"))await Work(()=>controller.UseCredentialsAsync(location,purposes,true));
     }
     async Task SaveCredentials()
     {
-        var entered=new Credentials(key.Password,webhook.Password,secret.Password);
+        var entered=new Credentials(key.Password,webhook.Password,secret.Password);var location=SelectedCredentialLocation;
         try
         {
-            if(await Confirm("加密保存新输入","将用本次输入替换插件本机三个凭据字段；空字段也会替换为空。不会更改独立版保险箱，不授予使用权限。输入值不会显示在此预览或日志。"))await Work(()=>controller.SaveCredentialsAsync(entered,true));
+            if(location==CredentialLocation.ConnectedStore){ShowNotice("已连接的独立版凭据只读；请明确选择宿主或插件来源保存新输入。");return;}
+            if(await Confirm("加密保存新输入",$"来源：{credentialLocation.SelectedItem}\n用本次输入替换该来源三个凭据字段；空字段删除。旧用途批准撤销，不授予使用权限。不会改其他来源或独立版保险箱。输入值不会显示在此预览或日志。宿主批次保存中断后须重新完整保存。"))await Work(()=>controller.SaveCredentialsAsync(location,entered,true));
         }
         finally{key.Password="";webhook.Password="";secret.Password="";}
+    }
+    CredentialLocation SelectedCredentialLocation=>credentialLocation.SelectedItem is CredentialChoice choice?choice.Location:throw new RuntimeFault(RuntimeFailure.Credentials);
+    async Task RevokeCredentials()
+    {
+        // Invalidate synchronously before awaiting registry persistence or a lower provider ignoring cancellation.
+        var retired=controller.RevokeCredentialsAsync();
+        await Work(async()=>{if(session.Monitoring is {} monitor)await monitor.StopAsync();await retired;});
+        ShowNotice("已撤销凭据用途并停止工作；保存的密文、业务账本、预算与发送尝试保留。");
+    }
+    async Task DeleteCredentials()
+    {
+        var location=SelectedCredentialLocation;
+        if(location==CredentialLocation.ConnectedStore){ShowNotice("已连接的独立版凭据只读；此处不会删除该保险箱。");return;}
+        if(await Confirm("删除所选来源凭据",$"来源：{credentialLocation.SelectedItem}\n删除该来源三个字段并撤销用途批准；业务账本、断点、预算、发送尝试和其他凭据来源保留。"))await Work(()=>controller.DeleteCredentialsAsync(location,true));
     }
     async Task<bool> Confirm(string title,string content,string primary="确认本次操作")
     {
@@ -273,4 +292,5 @@ internal sealed class InsightPage:UserControl
     static bool HasOffset(string text)=>System.Text.RegularExpressions.Regex.IsMatch(text,@"(Z|[+-]\d\d:\d\d)$");
     sealed record ConversationRow(Conversation Value){public override string ToString()=>$"{Value.Name} · {Value.ConversationId}";}
     sealed record HistoryRow(SavedReport Value){public override string ToString()=>$"{Value.CreatedAt:yyyy-MM-dd HH:mm} · {(Value.IsDemo?"模拟 · ":"")}{Value.Task}";}
+    sealed record CredentialChoice(CredentialLocation Location,string Label){public override string ToString()=>Label;}
 }

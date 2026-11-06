@@ -19,16 +19,15 @@ public sealed class InsightPlugin:IWorkbenchPlugin
         if(session is not null)throw new InvalidOperationException("Plugin instance already initialized.");
         if(context is not IPluginRuntimeContext runtime)throw new InvalidOperationException("Workbench host 0.2 runtime services are required.");
         var cipher=new DpapiCipher();
-        var controller=new InsightController(context.DataDirectory,context.PluginId,cipher,lifetime:context.Lifetime);
+        var credentials=new WorkbenchCredentialProvider(runtime.Secrets);
+        var controller=new InsightController(context.DataDirectory,context.PluginId,cipher,lifetime:context.Lifetime,hostCredentials:credentials);
         session=new(controller,context.DataDirectory,cipher,CanonicalStoreLocation.Production(),
             token=>context.Settings.GetAsync("preferences",new Preferences(),token),
             value=>context.Settings.SetAsync("preferences",value));
         try
         {
             monitor=new(session,runtime.BackgroundTasks,()=>runtime.StopReason,context.Lifetime);session.Monitoring=monitor;monitor.Register();
-            runtime.Secrets.Register(new("openai.api-key","OpenAI API key","仅声明元数据；本版不读取或写入宿主值。"));
-            runtime.Secrets.Register(new("dingtalk.webhook-url","钉钉 Webhook URL","仅声明元数据；本版不读取或写入宿主值。"));
-            runtime.Secrets.Register(new("dingtalk.webhook-secret","钉钉 Webhook 签名密钥","仅声明元数据；本版不读取或写入宿主值。"));
+            credentials.Register();
             context.RegisterView(new WinUiView("workspace","钉钉沟通事项",CreateWorkspace));
             context.RegisterView(new WinUiView("settings","钉钉沟通事项",CreateSettings,WinUiViewKind.Settings));
             await controller.InitializeAsync();

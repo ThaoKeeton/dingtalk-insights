@@ -3,7 +3,7 @@ using DingTalkInsights.Core;
 namespace DingTalkInsights.Runtime;
 
 public enum RuntimeConnection { Demo,Canonical,Disconnected }
-public enum CredentialLocation { Plugin,ConnectedStore }
+public enum CredentialLocation { Plugin,ConnectedStore,Host }
 [Flags] public enum CredentialUse { None=0,Model=1,Webhook=2 }
 public enum RuntimeFailure { Inactive,Busy,Connection,Ownership,Credentials,Configuration,Retention,Storage,Source,Model }
 /// <summary>Safe display text only; never wraps lower transport/provider exception text.</summary>

@@ -8,6 +8,7 @@ public sealed partial class InsightController:IAsyncDisposable
     readonly string dataDirectory,ownerContext;
     readonly IDataCipher cipher;
     readonly IRuntimeServices services;
+    readonly ICredentialProvider? hostCredentials;
     readonly IMonitorClock clock;
     readonly TimeProvider time;
     readonly CancellationToken lifetime;
@@ -27,7 +28,7 @@ public sealed partial class InsightController:IAsyncDisposable
     MonitorSupervisor? supervisor;
     Task monitoringCompletion=Task.CompletedTask;
     string? canonicalRoot;
-    CredentialVault? selectedVault;
+    ICredentialProvider? selectedCredentials;
     string selectedRevision="";
     CredentialUse allowedCredentials;
     RuntimeConnection connection=RuntimeConnection.Demo;
@@ -40,12 +41,12 @@ public sealed partial class InsightController:IAsyncDisposable
     RuntimeSnapshot snapshot=new();
     DateTimeOffset visibleRetentionReference;
 
-    public InsightController(string dataDirectory,string ownerContext,IDataCipher cipher,IRuntimeServices? services=null,IMonitorClock? clock=null,CancellationToken lifetime=default)
+    public InsightController(string dataDirectory,string ownerContext,IDataCipher cipher,IRuntimeServices? services=null,IMonitorClock? clock=null,CancellationToken lifetime=default,ICredentialProvider? hostCredentials=null)
     {
         if(!Path.IsPathFullyQualified(dataDirectory))throw new RuntimeFault(RuntimeFailure.Connection);
         Guard.Identifier(ownerContext,"插件所有者上下文无效。");
         this.dataDirectory=Path.GetFullPath(dataDirectory);this.ownerContext=Guard.Hash(ownerContext+"\n"+this.dataDirectory+"\n"+Guid.NewGuid());
-        this.cipher=cipher;this.services=services??new RuntimeServices();this.clock=clock??new SystemMonitorClock();time=new ClockTime(this.clock);this.lifetime=lifetime;
+        this.cipher=cipher;this.services=services??new RuntimeServices();this.clock=clock??new SystemMonitorClock();time=new ClockTime(this.clock);this.lifetime=lifetime;this.hostCredentials=hostCredentials;
         demo=Demo.CreateBatch(this.clock.UtcNow);
         lifetimeRegistration=lifetime.Register(static value=>((InsightController)value!).OnLifetimeCancelled(),this);
     }
@@ -55,6 +56,7 @@ public sealed partial class InsightController:IAsyncDisposable
             supervisor?.Completion.IsCompleted??true,dispatches,ownedStoreWrites);}
     }
     public Task InitializeAsync(){EnsureActive();return Task.CompletedTask;}
+    public bool HostCredentialsAvailable=>hostCredentials is not null;
     public Task Deactivation{get{lock(sync)return deactivation;}}
     /// <summary>The actual supervisor loop. Capture after a successful Start; Stop/Deactivate await its retirement.</summary>
     public Task MonitoringCompletion{get{lock(sync)return monitoringCompletion;}}
@@ -115,28 +117,6 @@ public sealed partial class InsightController:IAsyncDisposable
             catch{opened.Dispose();throw;}
         },RuntimeFailure.Storage,cancellation);
     }
-    public Task<bool> UseCredentialsAsync(CredentialLocation location,CredentialUse use,bool confirmed,CancellationToken cancellation=default)
-    {
-        if(!confirmed)return Task.FromResult(false);
-        return Run(operation=>
-        {
-            RequireStopped();if(!Enum.IsDefined(location)||use==CredentialUse.None||(use&~(CredentialUse.Model|CredentialUse.Webhook))!=0)throw new RuntimeFault(RuntimeFailure.Credentials);
-            if(location==CredentialLocation.ConnectedStore)RequireCanonical();
-            var vault=new CredentialVault(Path.Combine(location==CredentialLocation.Plugin?dataDirectory:canonicalRoot!,"credentials.dpapi"),cipher);
-            if(!vault.Exists)throw new RuntimeFault(RuntimeFailure.Credentials);var revision=vault.Revision;
-            Commit(operation,()=>{previews.Clear();selectedVault=vault;selectedRevision=revision;allowedCredentials=use;});return Task.FromResult(true);
-        },RuntimeFailure.Credentials,cancellation);
-    }
-    /// <summary>Replaces plugin-local values only. Does not grant use or modify the connected standalone vault.</summary>
-    public Task<bool> SaveCredentialsAsync(Credentials values,bool confirmed,CancellationToken cancellation=default)
-    {
-        if(!confirmed)return Task.FromResult(false);
-        return Run(operation=>
-        {
-            RequireStopped();if(values.OpenAiKey.Length>8192||values.WebhookUrl.Length>8192||values.WebhookSecret.Length>8192)throw new RuntimeFault(RuntimeFailure.Credentials);
-            Commit(operation,()=>{new CredentialVault(Path.Combine(dataDirectory,"credentials.dpapi"),cipher).Save(values);ClearCredentialUse();});return Task.FromResult(true);
-        },RuntimeFailure.Storage,cancellation);
-    }
     public Task<bool> LoadWorkspaceAsync(CancellationToken cancellation=default)=>Run(operation=>
     {
         var document=Workspace().Read();if(document is not null)
@@ -153,24 +133,6 @@ public sealed partial class InsightController:IAsyncDisposable
     }
     EncryptedDocument<WorkspaceDocument> Workspace()=>new(Path.Combine(dataDirectory,"workspace.dpapi"),cipher,64*1024);
     sealed record WorkspaceDocument(int Version,string Draft);
-    string CredentialRevision(CredentialUse use)
-    {
-        var revision=BoundCredentialRevision(use);
-        if(!selectedVault!.Exists||selectedVault.Revision!=selectedRevision)throw new RuntimeFault(RuntimeFailure.Credentials);
-        return revision;
-    }
-    string BoundCredentialRevision(CredentialUse use)
-    {
-        if(selectedVault is null||(allowedCredentials&use)!=use)throw new RuntimeFault(RuntimeFailure.Credentials);
-        return Guard.Hash(ownerContext+"\n"+canonicalRoot+"\n"+selectedRevision+"\n"+use);
-    }
-    Credentials PrivateCredentials(CredentialUse use)
-    {
-        var revision=CredentialRevision(use);var values=selectedVault!.Read();
-        if(CredentialRevision(use)!=revision||use==CredentialUse.Model&&string.IsNullOrWhiteSpace(values.OpenAiKey)||use==CredentialUse.Webhook&&string.IsNullOrWhiteSpace(values.WebhookUrl))throw new RuntimeFault(RuntimeFailure.Credentials);
-        return values;
-    }
-    void ClearCredentialUse(){previews.Clear();selectedVault=null;selectedRevision="";allowedCredentials=CredentialUse.None;}
     void RequireCanonical(){if(connection!=RuntimeConnection.Canonical||store is null||canonicalRoot is null)throw new RuntimeFault(RuntimeFailure.Connection);}
     void RequireStopped(){if(supervisor?.IsRunning==true)throw new RuntimeFault(RuntimeFailure.Busy);}
     void RequireStore(){if(store is null)throw new RuntimeFault(RuntimeFailure.Connection);}

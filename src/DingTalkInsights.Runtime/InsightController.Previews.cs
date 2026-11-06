@@ -17,7 +17,7 @@ public sealed partial class InsightController
     {
         EnsureCurrent(operation.Generation,operation.Token);
         if(authority.Owner!=ownerContext||authority.Generation!=generation||authority.RetentionDays!=state.RetentionDays||clock.UtcNow<authority.CreatedAt||clock.UtcNow>authority.ExpiresAt||
-            !previews.Remove(authority.Id)||authority.Use!=CredentialUse.None&&(selectedVault is null||(allowedCredentials&authority.Use)!=authority.Use||BoundCredentialRevision(authority.Use)!=authority.CredentialRevision))
+            !previews.Remove(authority.Id)||authority.Use!=CredentialUse.None&&(selectedCredentials is null||(allowedCredentials&authority.Use)!=authority.Use||BoundCredentialRevision(authority.Use)!=authority.CredentialRevision))
             throw new RuntimeFault(RuntimeFailure.Configuration);
     }
     /// <summary>Local, memory-only scope/retention effects. No source or credential-file I/O.</summary>
@@ -47,25 +47,25 @@ public sealed partial class InsightController
     public async Task<AnalysisPreview?> PreviewAnalysisAsync(ModelSettings model,CancellationToken cancellation=default)
     {
         AnalysisPreview? result=null;
-        await Run(operation=>
+        await Run(async operation=>
         {
             RequireStore();model.Validate();var batch=candidates??throw new RuntimeFault(RuntimeFailure.Configuration);state.EnsureRetained(batch);
             var rows=batch.Messages.Where(m=>!state.Attempted.Contains(InsightState.AttemptKey(batch.Scope,m))).ToArray();
-            if(rows.Length==0){Commit(operation,()=>notice="这些来源修订已有模型尝试；请核对历史，不自动重试。");return Task.FromResult(false);}
+            if(rows.Length==0){Commit(operation,()=>notice="这些来源修订已有模型尝试；请核对历史，不自动重试。");return false;}
             var use=batch.IsDemo?CredentialUse.None:CredentialUse.Model;
-            if(!batch.IsDemo){RequireCanonical();_ = CredentialRevision(use);}
-            Commit(operation,()=>result=new(NewAuthority(use),batch with{Messages=Array.AsReadOnly(rows)},batch.Fingerprint,AnalysisTask,model));return Task.FromResult(true);
+            if(!batch.IsDemo){RequireCanonical();_ = await CredentialRevisionAsync(use,operation.Generation,operation.Token);}
+            Commit(operation,()=>result=new(NewAuthority(use),batch with{Messages=Array.AsReadOnly(rows)},batch.Fingerprint,AnalysisTask,model));return true;
         },RuntimeFailure.Configuration,cancellation);return result;
     }
     public async Task<SendPreview?> PreviewSendAsync(string destinationName,CancellationToken cancellation=default)
     {
         SendPreview? result=null;
-        await Run(operation=>
+        await Run(async operation=>
         {
-            RequireSendableReport();var credential=PrivateCredentials(CredentialUse.Webhook);
+            RequireSendableReport();var credential=await PrivateCredentialsAsync(CredentialUse.Webhook,operation.Generation,operation.Token);
             var target=new WebhookTarget(destinationName,credential.WebhookUrl,credential.WebhookSecret);target.Validate();
             var ledger=store!.SendAttempts.Load();ledger.Validate();ledger.Attempts.TryGetValue(DurableWebhookSender.AttemptKey(target,markdown),out var previous);
-            Commit(operation,()=>result=new(NewAuthority(CredentialUse.Webhook),target.Name,Guard.Hash(target.Url)[..12],markdown,WebhookClient.Fingerprint(target,markdown),previous));return Task.FromResult(true);
+            Commit(operation,()=>result=new(NewAuthority(CredentialUse.Webhook),target.Name,Guard.Hash(target.Url)[..12],markdown,WebhookClient.Fingerprint(target,markdown),previous));return true;
         },RuntimeFailure.Storage,cancellation);return result;
     }
     void RequireSendableReport()

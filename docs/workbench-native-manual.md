@@ -13,6 +13,7 @@ Record date, Windows11 24H2+ x64 OS/build, session, DPI, product commit, package
 | Resizing and 100%, 150%, 200% DPI without clipped authorization text/actions | Not run | |
 | System/light/dark themes with readable native controls and evidence text | Not run | |
 | Native settings edit/save/load, navigation and explicit encrypted-draft restoration | Not run | |
+| Synthetic host credential save/cancel, separate purpose approval, revoke/delete and empty recreated inputs | Not run | |
 | Demo read/search/analysis/history retain evidence and tentative status | Not run | |
 | Monitor survives navigation singly; Stop prevents later work; active disable fully retires | Not run | |
 | Actual close exits process; restart stays demo without authority | Not run | |
@@ -20,4 +21,4 @@ Record date, Windows11 24H2+ x64 OS/build, session, DPI, product commit, package
 | Real standard-store connection / DPAPI purposes / model / manual Webhook integration | Not run; separate explicit authorization needed | |
 | Multi-day polling/sleep/logoff/failure behavior | Not run | |
 
-Task3 (0.3.1 / SDK82) adds registered monitor and actual SDK package-helper phases. Its exact-head native Windows result is pending; the old API1 checkpoint83c75e8 passed complete published/re-extracted Server2025 automation. Verify pending-stop text and fresh Start after real retirement, zero automatic monitor/secret-value access on restore, and distinguish guarded SDK maintenance helper from the unchanged shipping App. Host secret value actions remain Task4. Existing manual/live/multiday blanks are not closed by reference compilation or Server2025 automation.
+Task3 (0.3.1 / SDK82) baseline b50586f passed Windows Server2025 CI42284239767. Version0.3.2 adds host value/provider/revision and native synthetic credential actions; its fresh CI is recorded separately. Verify pending-stop text and fresh Start after real retirement, zero automatic monitor/secret-value access on restore, and distinguish guarded SDK maintenance helper from final shipping-platform integration. Existing manual/live/multiday blanks are not closed by reference compilation or Server2025 automation. This task uses no real accounts/keys/API calls; real-interface testing must not use Webhook or send DingTalk messages.

@@ -130,7 +130,7 @@ internal static class PackageTool
                 if(!File.Exists(Path.Combine(output,name+".dll")))throw new IOException("Missing required private assembly: "+name);
             File.WriteAllText(Path.Combine(output,"build-info.json"),JsonSerializer.Serialize(new
             {
-                productVersion="0.3.1",productCommit,platformCommit="82bd958e220aaf94ccdbf1ea68b0ec53b770706a",apiVersion=1,sdk="10.0.403",appSdk="1.8.260921001",
+                productVersion="0.3.2",productCommit,platformCommit="82bd958e220aaf94ccdbf1ea68b0ec53b770706a",apiVersion=1,sdk="10.0.403",appSdk="1.8.260921001",
                 provenanceSha256=Hash(provenance),sharedIdentities=shared.Order(StringComparer.Ordinal).ToArray(),assemblies=Directory.EnumerateFiles(output,"*.dll",SearchOption.AllDirectories).Select(p=>new{path=Path.GetRelativePath(output,p),identity=AssemblyIdentity(p)??"native:"+Path.GetFileName(p)})
             },Json));
             File.WriteAllText(Path.Combine(output,"inventory.json"),JsonSerializer.Serialize(Inventory(output),Json));

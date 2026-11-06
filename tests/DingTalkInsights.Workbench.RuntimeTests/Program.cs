@@ -4,7 +4,7 @@ using DingTalkInsights.Workbench;
 using Workbench.Sdk;
 
 if(args.Length is <1 or >2)throw new ArgumentException("Supply the separately built public-SDK-only control fixture assembly and optional test-name filter.");
-var tests=BridgeTests.All().Concat(ManagerTests.All(args[0])).Where(test=>args.Length==1||test.Item1.Contains(args[1],StringComparison.Ordinal)).ToList();var failed=0;
+var tests=BridgeTests.All().Concat(CredentialTests.All()).Concat(ManagerTests.All(args[0])).Where(test=>args.Length==1||test.Item1.Contains(args[1],StringComparison.Ordinal)).ToList();var failed=0;
 foreach(var (name,test) in tests)
 {
     try{await test().WaitAsync(TimeSpan.FromSeconds(15));Console.WriteLine("PASS "+name);}

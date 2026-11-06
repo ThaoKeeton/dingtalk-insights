@@ -8,7 +8,7 @@ if (-not $out.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase)) { thr
 if ((dotnet --version).Trim() -ne '10.0.403') { throw 'Select .NET SDK 10.0.403 before building' }
 if (Test-Path $out) { throw 'Output directory already exists; retain evidence or explicitly remove the previous owned build before retrying' }
 New-Item -ItemType Directory -Path $out | Out-Null
-Set-Content -LiteralPath (Join-Path $out '.dti-build-owner') -Value 'DingTalkInsights.Workbench 0.3.1' -NoNewline
+Set-Content -LiteralPath (Join-Path $out '.dti-build-owner') -Value 'DingTalkInsights.Workbench 0.3.2' -NoNewline
 $pin = Join-Path $repo 'eng/vendor/workbench-82bd958e'
 $toolProject = Join-Path $repo 'tools/DingTalkInsights.PackageTool/DingTalkInsights.PackageTool.csproj'
 $hostProject = Join-Path $repo 'tests/DingTalkInsights.Workbench.AcceptanceHost/DingTalkInsights.Workbench.AcceptanceHost.csproj'
@@ -36,7 +36,7 @@ try {
     Invoke-Dotnet @($tool, 'stage', "$out/package-build", "$out/host", "$out/package", "$pin/provenance.json", $productCommit)
     Copy-Item -LiteralPath "$pin/provenance.json" -Destination "$out/source-provenance.json"
     Invoke-Dotnet @($tool, 'verify-package', "$out/package", "$out/host")
-    Compress-Archive -Path "$out/package/*" -DestinationPath "$out/DingTalkInsights.Workbench-0.3.1-win-x64.zip"
+    Compress-Archive -Path "$out/package/*" -DestinationPath "$out/DingTalkInsights.Workbench-0.3.2-win-x64.zip"
     Compress-Archive -Path "$out/host/*" -DestinationPath "$out/DingTalkInsights.Workbench.AcceptanceHost-win-x64.zip"
     $zipHashes = @(Get-FileHash -Algorithm SHA256 "$out/*.zip" | Select-Object Path, Hash)
     $zipHashes | ConvertTo-Json | Set-Content "$out/zip-sha256.json"

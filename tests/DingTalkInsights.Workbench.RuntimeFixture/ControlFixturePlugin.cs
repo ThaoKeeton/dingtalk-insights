@@ -14,7 +14,6 @@ public sealed class ControlFixturePlugin:IWorkbenchPlugin
     {
         cancellation.ThrowIfCancellationRequested();var runtime=(IPluginRuntimeContext)context;
         view=new(runtime);view.Bridge.Register();context.RegisterView(view);
-        foreach(var id in new[]{"openai.api-key","dingtalk.webhook-url","dingtalk.webhook-secret"})runtime.Secrets.Register(new(id,"Synthetic declaration"));
         return view.Controller.InitializeAsync();
     }
     public Task StopAsync(CancellationToken cancellation)=>view?.Bridge.DeactivateAsync()??Task.CompletedTask;
@@ -29,7 +28,8 @@ public sealed class ControlView:IPluginView
     public WorkbenchMonitorTask Bridge{get;}
     public ControlView(IPluginRuntimeContext context)
     {
-        Context=context;Controller=new(context.DataDirectory,context.PluginId,Cipher,Source,lifetime:context.Lifetime);
+        Context=context;var credentials=new WorkbenchCredentialProvider(context.Secrets);credentials.Register();
+        Controller=new(context.DataDirectory,context.PluginId,Cipher,Source,lifetime:context.Lifetime,hostCredentials:credentials);
         Session=new(Controller,context.DataDirectory,Cipher,new(()=>throw new InvalidOperationException("Fixture path requires explicit test selection.")),
             token=>context.Settings.GetAsync("preferences",new Preferences(),token),value=>context.Settings.SetAsync("preferences",value));
         Bridge=new(Session,context.BackgroundTasks,()=>context.StopReason,context.Lifetime);Session.Monitoring=Bridge;

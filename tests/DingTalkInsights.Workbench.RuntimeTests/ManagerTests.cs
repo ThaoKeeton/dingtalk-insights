@@ -13,6 +13,37 @@ internal static class ManagerTests
     static async Task Wait(Func<bool> condition){using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(5));while(!condition())await Task.Delay(10,deadline.Token);}
     public static IEnumerable<(string,Func<Task>)> All(string fixture)
     {
+        yield return ("actual Manager owns explicit host credentials and never restores a purpose grant",async()=>
+        {
+            using var f=new ManagedRoot(fixture);await using var manager=f.Manager();await manager.InstallAsync(f.Package);await manager.DiscoverAsync();await manager.EnableAsync(Id,confirmTrust:true);
+            var view=manager.Contributions.Views.Single().View;var session=Get<PluginSession>(view,"Session");var context=Get<IPluginRuntimeContext>(view,"Context");
+            Require(session.Controller.HostCredentialsAvailable,"actual plugin did not inject the host provider");
+            Require(!Directory.Exists(Path.Combine(f.Root,"user","secrets")),"Initialize read/wrote host values");
+            var values=new Credentials("SYNTHETIC_SECRET_MANAGER");
+            if(!OperatingSystem.IsWindows())
+            {
+                try{await session.Controller.SaveCredentialsAsync(CredentialLocation.Host,values,true);throw new Exception("unsupported actual store accepted save");}
+                catch(RuntimeFault fault){Require(fault.Category==RuntimeFailure.Credentials,"unsupported store leaked unsafe failure");}
+                Require(!Directory.Exists(Path.Combine(f.Root,"user","secrets")),"unsupported save created secret files");return;
+            }
+            Require(await session.Controller.SaveCredentialsAsync(CredentialLocation.Host,values,true),"actual protected save failed");
+            var provider=new WorkbenchCredentialProvider(context.Secrets);var revision=await provider.GetRevisionAsync(CredentialUse.Model);
+            Require((await provider.ReadAsync(CredentialUse.Model,revision)).OpenAiKey==values.OpenAiKey,"actual host read selected wrong value");
+            var ciphertext=Directory.EnumerateFiles(Path.Combine(f.Root,"user","secrets"),"*",SearchOption.AllDirectories).Select(File.ReadAllBytes).ToArray();
+            Require(ciphertext.Length==2&&ciphertext.All(bytes=>!System.Text.Encoding.UTF8.GetString(bytes).Contains("SYNTHETIC_SECRET")),"secret values entered plaintext files");
+            Require(await session.Controller.UseCredentialsAsync(CredentialLocation.Host,CredentialUse.Model,true),"actual purpose approval failed");
+            await manager.WriteSecretAsync(Id,"openai.api-key","SYNTHETIC_SECRET_GENERIC_EDIT");
+            try{await provider.ReadAsync(CredentialUse.Model,revision);throw new Exception("single field edit retained batch authority");}catch(RuntimeFault){}
+            await session.Controller.SaveCredentialsAsync(CredentialLocation.Host,values,true);
+            Require((await manager.DisableAsync(Id)).Succeeded,"credential owner disable failed");
+            try{await provider.GetRevisionAsync(CredentialUse.Model);throw new Exception("retired context retained access");}catch(RuntimeFault){}
+            Require((await manager.EnableAsync(Id)).Succeeded,"credential owner re-enable failed");
+            var next=Get<PluginSession>(manager.Contributions.Views.Single().View,"Session");
+            Require(!next.Controller.Observation.StoreOwned&&next.Controller.Observation.Dispatches==0,"re-enable restored business authority");
+            Require(await next.Controller.UseCredentialsAsync(CredentialLocation.Host,CredentialUse.Model,true),"saved host credentials not reusable through new explicit approval");
+            Require(await next.Controller.DeleteCredentialsAsync(CredentialLocation.Host,true),"actual protected delete failed");
+            Require(!Directory.EnumerateFiles(Path.Combine(f.Root,"user","secrets"),"*",SearchOption.AllDirectories).Any(),"host delete retained values");
+        });
         yield return ("actual Manager enforces plugin-only metadata, confirmed starts, host Stop and safe restore",async()=>
         {
             using var f=new ManagedRoot(fixture);await using(var manager=f.Manager())
@@ -24,7 +55,7 @@ internal static class ManagerTests
                 var view=manager.Contributions.Views.Single().View;var session=Get<PluginSession>(view,"Session");var bridge=Get<WorkbenchMonitorTask>(view,"Bridge");
                 var context=Get<IPluginRuntimeContext>(view,"Context");var task=manager.GetBackgroundTaskSnapshots(Id).Single();
                 Require(task.Id=="monitor"&&task.RequiresPluginStart&&!task.ResumeOnStartup&&!task.DesiredRunning,"task metadata/consent wrong");
-                Require(manager.GetSecretDefinitions(Id).Select(d=>d.Id).Order().SequenceEqual(new[]{"dingtalk.webhook-secret","dingtalk.webhook-url","openai.api-key"}),"secret definitions wrong");
+                Require(manager.GetSecretDefinitions(Id).Select(d=>d.Id).Order().SequenceEqual(new[]{"credentials.commit","dingtalk.webhook-secret","dingtalk.webhook-url","openai.api-key"}),"secret definitions wrong");
                 Require(!(await manager.StartBackgroundTaskAsync(Id,"monitor")).Succeeded&&!(await manager.SetBackgroundTaskResumeOnStartupAsync(Id,"monitor",true)).Succeeded,"host bypassed preview");
                 Require((await context.BackgroundTasks.StartAsync("monitor")).Succeeded,"context scheduling control failed");
                 await Wait(()=>context.BackgroundTasks.GetSnapshots().Single().State==PluginBackgroundTaskState.Completed);
