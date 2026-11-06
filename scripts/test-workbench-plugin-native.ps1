@@ -120,12 +120,24 @@ function Invoke-Phase([string]$HostDir, [string]$PackageDir, [string]$Root, [str
             catch { $parseFailed = $true }
         }
         $passed = -not $timedOut -and $exitCode -eq 0 -and $null -ne $result -and $result.succeeded
+        $postExitLeasesAcquired = $false
+        if ($passed) {
+            # The exact owner has exited; prove host, installed demo and both real
+            # source-linked canonical stores accept a new exclusive owner.
+            foreach ($relative in @('user/host.lock','user/data/com.projectworkbench.dingtalk-insights/demo/state.dpapi.lock','pending-stop/initial-readiness/canonical/state.dpapi.lock','pending-stop/one-shot-read/canonical/state.dpapi.lock')) {
+                $leasePath = Join-Path $Root $relative
+                Reject-Links $leasePath
+                $lease = [IO.FileStream]::new($leasePath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+                $lease.Dispose()
+            }
+            $postExitLeasesAcquired = $true
+        }
         $summary = $null
         if (-not $passed) {
             $summary = New-NativeFailureSummary $result $parseFailed $childStderr
             Write-Host ("Native failure summary ($Variant/$Phase, exit=$exitCode, timeout=$timedOut): " + ($summary | ConvertTo-Json -Compress -Depth 5))
         }
-        $phaseResult = [ordered]@{ succeeded = $passed; variant = $Variant; phase = $Phase; processId = $ownedPid; timedOut = $timedOut; exitCode = $exitCode; actualExitVerified = $true; failureSummary = $summary; provisionalNativeResult = $result }
+        $phaseResult = [ordered]@{ succeeded = $passed; variant = $Variant; phase = $Phase; processId = $ownedPid; timedOut = $timedOut; exitCode = $exitCode; actualExitVerified = $true; postExitLeasesAcquired = $postExitLeasesAcquired; failureSummary = $summary; provisionalNativeResult = $result }
         $phaseResult | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath "$evidence/$Variant-$Phase.final.json"
         $script:final.runs += $phaseResult
         if (-not $passed) { throw "Native phase failed: $Variant/$Phase; timeout=$timedOut; exit=$exitCode. Provisional success cannot override this failure." }

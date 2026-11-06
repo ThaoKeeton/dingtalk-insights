@@ -151,24 +151,53 @@ internal static partial class AcceptanceDriver
         Require(Fingerprint(options.Package)==packageHash,"Source package mutated during approval/load.");
         CurrentStep="actual-window-close";
         var closingLoop=plugin is null?Task.CompletedTask:Loop(plugin);
-        var closingObserved=false;
-        window.AppWindow.Closing+=(_,_)=>closingObserved=true;
-        window.Closed+=(_,_)=>
+        var closingSession=plugin?.GetType().GetField("session",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(plugin);
+        // Capture the original presenter's task without invoking cleanup ourselves. Window.Closed
+        // is cancellable and can precede AppWindow.Closing; neither callback proves retirement.
+        var closeCompletion=((TaskCompletionSource)typeof(MainWindow).GetField("_closeCompleted",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(window)!).Task;
+        var closingObserved=false;var closedObserved=false;var destroyingObserved=false;var closeReported=false;
+        var closeEvents=new List<string>();JsonElement? destroyedResources=null;string? destroyedDataHash=null;
+        void CompleteClose()
         {
+            if(closeReported||!closeCompletion.IsCompleted||!closingObserved||!closedObserved||!destroyingObserved)return;
+            closeReported=true;
             try
             {
-                Require(closingObserved,"Actual AppWindow close event not observed.");
+                Require(closeCompletion.IsCompletedSuccessfully,"Original presenter close task did not retire successfully.");
                 if(plugin is not null)
                 {
-                    var final=Resources(plugin);Require(closingLoop.IsCompleted&&Observation(plugin).GetProperty("AdapterPendingPersistence").GetInt32()==0&&final.GetProperty("PendingOperations").GetInt32()==0&&final.GetProperty("Subscriptions").GetInt32()==0&&!final.GetProperty("StoreOwned").GetBoolean(),"Real close left plugin work/resources.");
-                    observations.Add(new{stage="actual-window-closed",resources=final});
+                    var controllerRetirement=(Task)plugin.GetType().GetProperty("Retirement")!.GetValue(plugin)!;
+                    var sessionRetirement=closingSession?.GetType().GetField("retirement",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(closingSession) as Task;
+                    var observation=Observation(plugin);var final=observation.GetProperty("Resources");
+                    Require(closingLoop.IsCompletedSuccessfully&&controllerRetirement.IsCompletedSuccessfully&&sessionRetirement is {IsCompletedSuccessfully:true}
+                        &&!observation.GetProperty("Active").GetBoolean()&&!observation.GetProperty("IsMonitoring").GetBoolean()
+                        &&observation.GetProperty("AdapterPendingPersistence").GetInt32()==0&&final.GetProperty("PendingOperations").GetInt32()==0
+                        &&final.GetProperty("Subscriptions").GetInt32()==0&&!final.GetProperty("StoreOwned").GetBoolean(),"Real close left plugin work/resources.");
+                    Require(destroyedResources is {} retired&&final.GetProperty("Dispatches").GetInt64()==retired.GetProperty("Dispatches").GetInt64()
+                        &&final.GetProperty("OwnedStoreWrites").GetInt64()==retired.GetProperty("OwnedStoreWrites").GetInt64()
+                        &&Fingerprint(data)==destroyedDataHash,"Plugin dispatched or wrote after actual window destruction.");
+                    using(var lease=new FileStream(Path.Combine(data,"demo","state.dpapi.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None)){}
+                    observations.Add(new{stage="actual-window-retired",resources=final,originalLoopId=closingLoop.Id,controllerRetirementSuccessful=controllerRetirement.IsCompletedSuccessfully,sessionRetirementSuccessful=sessionRetirement!.IsCompletedSuccessfully});
                 }
-                checks.Add("Actual WM_CLOSE/AppWindow.Closing and Window.Closed after full plugin retirement; launcher must still verify process exit0");
+                using(var lease=new FileStream(Path.Combine(options.UserRoot,"host.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None)){}
+                observations.Add(new{stage="actual-system-window-close",request="WM_SYSCOMMAND/SC_CLOSE",events=closeEvents.ToArray(),originalPresenterCloseSuccessful=closeCompletion.IsCompletedSuccessfully,hostLeaseReleased=true});
+                checks.Add("Actual system Close, AppWindow.Closing, Window.Closed and AppWindow.Destroying independently observed; original presenter close task and plugin work/resources retired; launcher must still verify process exit0");
                 report.WriteReport(new{succeeded=true,stage="closed-awaiting-launcher-exit-validation",phase=options.Phase,evidenceKind="source-linked-unmodified-presenter-compatibility",businessBoundary="production-demo-Core-MonitorSupervisor; no real DWS/account/model/Webhook",options.RunId,packageSha256=packageHash,platformCommit="6565180b17130f6d494978291df4138de3fdb0b4",productBuild=JsonDocument.Parse(File.ReadAllText(Path.Combine(options.Package,"build-info.json"))).RootElement.Clone(),os=RuntimeInformation.OSDescription,osBuild=Environment.OSVersion.Version.ToString(),sessionId=Process.GetCurrentProcess().SessionId,processId=Environment.ProcessId,uiThreadId=Environment.CurrentManagedThreadId,checks,observations,report.StartupStages,completedUtc=DateTimeOffset.UtcNow});
             }
-            catch(Exception error){Environment.ExitCode=1;WriteFailure(report,"actual-window-closed",error,window);}
+            catch(Exception error){Environment.ExitCode=1;WriteFailure(report,"actual-window-retired",error,window);}
+        }
+        window.AppWindow.Closing+=(_,_)=>{closingObserved=true;closeEvents.Add("AppWindow.Closing");CompleteClose();};
+        window.Closed+=(_,_)=>{closedObserved=true;closeEvents.Add("Window.Closed");CompleteClose();};
+        window.AppWindow.Destroying+=(_,_)=>
+        {
+            destroyingObserved=true;closeEvents.Add("AppWindow.Destroying");
+            if(plugin is not null){destroyedResources=Resources(plugin);destroyedDataHash=Fingerprint(data);}
+            CompleteClose();
         };
-        if(!PostMessage(WinRT.Interop.WindowNative.GetWindowHandle(window),0x0010,0,0))throw new IOException("Could not post actual owned-window WM_CLOSE.");
+        // The original task uses synchronous continuations. Record after its real Close() returns,
+        // before the last-window message loop exits, even when cleanup completes synchronously.
+        _=closeCompletion.ContinueWith(_=>CompleteClose(),CancellationToken.None,TaskContinuationOptions.ExecuteSynchronously,TaskScheduler.Default);
+        if(!PostMessage(WinRT.Interop.WindowNative.GetWindowHandle(window),0x0112,0xF060,0))throw new IOException("Could not post actual owned-window system Close command.");
     }
     static object PluginTarget(PluginManager manager)=>((WinUiView)manager.Contributions.Views.Single(v=>v.PluginId==Id&&v.View.Id=="workspace").View).CreateView.Target??throw new OwnedAssertionException("Factory has no plugin instance target.");
     static JsonElement Observation(object plugin)=>JsonDocument.Parse((string)plugin.GetType().GetProperty("ObservationJson")!.GetValue(plugin)!).RootElement.Clone();
