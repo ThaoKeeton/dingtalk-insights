@@ -63,6 +63,8 @@ public sealed class MonitorEngine(InsightState state,IStateStore store)
         Func<MessageBatch,string,CancellationToken,Task<ModelResult>> analyze,DateTimeOffset now,CancellationToken cancellation,Func<DateTimeOffset>? utcNow)
     {
         cancellation.ThrowIfCancellationRequested();
+        // The caller's async before-model preparation may have crossed a retention boundary.
+        state.Trim(utcNow?.Invoke()??now,state.RetentionDays);state.EnsureRetained(batch);
         var request=OpenAiClient.BuildRequest(batch,task,model);
         // Fetch, readiness and semaphore waits may cross UTC midnight. Reserve on the dispatch boundary.
         var reservation=OpenAiClient.Reservation(request,model);

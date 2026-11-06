@@ -40,6 +40,13 @@ public sealed partial class InsightController
         {
             RequireStore();RequireStopped();Commit(operation,()=>Consume(preview.Authority,operation));
             var request=preview.Request;var config=await BuildConfiguration(request,operation.Generation,operation.Token);
+            Credentials? preparedModel=null;
+            async Task Prepare(CancellationToken token)
+            {
+                var values=await PrivateCredentialsAsync(CredentialUse.Model,operation.Generation,token);
+                if(await CredentialRevisionAsync(CredentialUse.Model,operation.Generation,token)!=config.CredentialRevision)throw new RuntimeFault(RuntimeFailure.Credentials);
+                lock(sync){EnsureCurrent(operation.Generation,token);preparedModel=values;}
+            }
             MonitorSupervisor created=null!;
             Commit(operation,()=>
             {
@@ -50,8 +57,13 @@ public sealed partial class InsightController
                 var owned=OwnedStore(operation.Generation);var engine=new MonitorEngine(state,owned);
                 created=new(engine,owned,
                     (scope,token)=>Fetch(config,scope,operation.Generation,token),
-                    config.UploadToModel?(batch,task,token)=>Analyze(config,batch,task,operation.Generation,token):null,
-                    async token=>await BuildConfiguration(request,operation.Generation,token),clock,operations);
+                    config.UploadToModel?(batch,task,token)=>
+                    {
+                        var values=preparedModel;preparedModel=null;
+                        return AnalyzePrepared(batch,task,config.Model,values,config.CredentialRevision,operation.Generation,token);
+                    }:null,
+                    async token=>await BuildConfiguration(request,operation.Generation,token),clock,operations,
+                    prepareModel:config.Source=="dws"&&config.UploadToModel?Prepare:null);
                 supervisor=created;created.Changed+=MonitorChanged;
             });
             var started=await created.StartAsync(config,confirmed:true,cancellation:operation.Token);
@@ -61,17 +73,15 @@ public sealed partial class InsightController
     }
     Task<MessageBatch> Fetch(MonitoringConfiguration config,QueryScope scope,long expected,CancellationToken cancellation)=>
         Dispatch(expected,cancellation,()=>config.Source=="demo"?Task.FromResult(SliceDemo(scope)):services.ReadAsync(config.Executable,scope,cancellation));
-    async Task<ModelResult> Analyze(MonitoringConfiguration config,MessageBatch batch,string task,long expected,CancellationToken cancellation)
-    {
-        if(config.Source=="demo")return await Dispatch(expected,cancellation,()=>Task.FromResult(new ModelResult(Demo.Analyze(batch,task),0,0)));
-        return await AnalyzeWithCredentials(batch,task,config.Model,config.CredentialRevision,expected,cancellation);
-    }
-    async Task<ModelResult> AnalyzeWithCredentials(MessageBatch batch,string task,ModelSettings model,string revision,long expected,CancellationToken cancellation)
-    {
-        var values=await PrivateCredentialsAsync(CredentialUse.Model,expected,cancellation);
-        if(await CredentialRevisionAsync(CredentialUse.Model,expected,cancellation)!=revision)throw new RuntimeFault(RuntimeFailure.Credentials);
-        return await Dispatch(expected,cancellation,()=>services.AnalyzeAsync(values.OpenAiKey,batch,task,model,cancellation));
-    }
+    Task<ModelResult> AnalyzePrepared(MessageBatch batch,string task,ModelSettings model,Credentials? values,string? revision,long expected,CancellationToken cancellation)=>
+        Dispatch(expected,cancellation,()=>
+        {
+            // No async provider work may occur between the engine's durable UTC reservation and dispatch.
+            EnforceRetention();state.EnsureRetained(batch);
+            if(batch.IsDemo)return Task.FromResult(new ModelResult(Demo.Analyze(batch,task),0,0));
+            if(values is null||BoundCredentialRevision(CredentialUse.Model)!=revision)throw new RuntimeFault(RuntimeFailure.Credentials);
+            return services.AnalyzeAsync(values.OpenAiKey,batch,task,model,cancellation);
+        });
     MessageBatch SliceDemo(QueryScope scope)=>demo with{Scope=scope,Messages=demo.Messages.Where(m=>m.CreatedAt>=scope.Start&&m.CreatedAt<scope.End).ToArray()};
     public Task<bool> ReadOnceAsync(MonitoringRequest request,bool confirmed,CancellationToken cancellation=default)=>ReadOnceCore(request,null,confirmed,cancellation);
     /// <summary>Native dialog path: consume the same immutable scope preview and keep its exact bounded end.</summary>
@@ -153,15 +163,14 @@ public sealed partial class InsightController
                     throw new RuntimeFault(RuntimeFailure.Configuration);
                 state.EnsureRetained(preview.Batch);
             });
-            var batch=preview.Batch;var model=preview.Model;string? revision=null;
+            var batch=preview.Batch;var model=preview.Model;string? revision=null;Credentials? credential=null;
             if(!batch.IsDemo)
             {
                 RequireCanonical();revision=await CredentialRevisionAsync(CredentialUse.Model,operation.Generation,operation.Token);
-                _ = await PrivateCredentialsAsync(CredentialUse.Model,operation.Generation,operation.Token);
+                credential=await PrivateCredentialsAsync(CredentialUse.Model,operation.Generation,operation.Token);
             }
             var result=await new MonitorEngine(state,OwnedStore(operation.Generation)).AnalyzeOnceAsync(batch,preview.Task,model,
-                (selected,text,token)=>selected.IsDemo?Dispatch(operation.Generation,token,()=>Task.FromResult(new ModelResult(Demo.Analyze(selected,text),0,0))):
-                    AnalyzeWithCredentials(selected,text,model,revision!,operation.Generation,token),clock.UtcNow,operation.Token,()=>clock.UtcNow);
+                (selected,text,token)=>AnalyzePrepared(selected,text,model,credential,revision,operation.Generation,token),clock.UtcNow,operation.Token,()=>clock.UtcNow);
             Commit(operation,()=>{SetReport(result.Report);notice="已生成带来源的待核实结果；请回原会话核对。";});return true;
         },RuntimeFailure.Model,cancellation);
     }
@@ -195,14 +204,15 @@ public sealed partial class InsightController
             });
             var content=preview.Markdown;var credential=await PrivateCredentialsAsync(CredentialUse.Webhook,operation.Generation,operation.Token);
             var revision=await CredentialRevisionAsync(CredentialUse.Webhook,operation.Generation,operation.Token);
+            Commit(operation,()=>{EnforceRetention();RequireSendableReport();if(markdown!=content)throw new RuntimeFault(RuntimeFailure.Retention);});
             var target=new WebhookTarget(preview.DestinationName,credential.WebhookUrl,credential.WebhookSecret);
             if(WebhookClient.Fingerprint(target,content)!=preview.Fingerprint)throw new RuntimeFault(RuntimeFailure.Configuration);
-            var sender=new DurableWebhookSender(store!.SendAttempts,async(approved,text,token)=>
+            var sender=new DurableWebhookSender(store!.SendAttempts,(approved,text,token)=>Dispatch(operation.Generation,token,()=>
             {
-                var current=await PrivateCredentialsAsync(CredentialUse.Webhook,operation.Generation,token);
-                if(await CredentialRevisionAsync(CredentialUse.Webhook,operation.Generation,token)!=revision||current.WebhookUrl!=credential.WebhookUrl||current.WebhookSecret!=credential.WebhookSecret)throw new RuntimeFault(RuntimeFailure.Credentials);
-                return await Dispatch(operation.Generation,token,()=>services.SendAsync(approved,text,token));
-            },time);
+                EnforceRetention();RequireSendableReport();
+                if(markdown!=content||BoundCredentialRevision(CredentialUse.Webhook)!=revision)throw new RuntimeFault(RuntimeFailure.Credentials);
+                return services.SendAsync(approved,text,token);
+            }),time);
             var result=await sender.SendAsync(target,content,true,humanConfirmedRetry,operation.Token);
             Commit(operation,()=>notice=result.Suppressed?"同一目标与正文已有发送尝试，未重发；请先核对接收群，人工重发可能重复送达。":result.Status switch
             {

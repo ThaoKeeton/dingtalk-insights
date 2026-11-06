@@ -15,7 +15,8 @@ public sealed class SystemMonitorClock:IMonitorClock
 public sealed class MonitorSupervisor(MonitorEngine engine,IStateStore store,
     Func<QueryScope,CancellationToken,Task<MessageBatch>> fetch,
     Func<MessageBatch,string,CancellationToken,Task<ModelResult>>? analyze,
-    Func<CancellationToken,Task<MonitoringConfiguration?>> currentConfiguration,IMonitorClock? clock=null,SemaphoreSlim? operationGate=null)
+    Func<CancellationToken,Task<MonitoringConfiguration?>> currentConfiguration,IMonitorClock? clock=null,SemaphoreSlim? operationGate=null,
+    Func<CancellationToken,Task>? prepareModel=null)
 {
     readonly IMonitorClock clock=clock??new SystemMonitorClock();
     readonly SemaphoreSlim lifecycle=new(1,1);
@@ -123,6 +124,12 @@ public sealed class MonitorSupervisor(MonitorEngine engine,IStateStore store,
         var current=await currentConfiguration(cancellation);cancellation.ThrowIfCancellationRequested();
         if(current is null||current.Fingerprint!=config.Fingerprint)throw new MonitoringFault(MonitorFailure.Configuration);
     }
+    async Task PrepareModel(MonitoringConfiguration config,CancellationToken cancellation)
+    {
+        await ValidateCurrent(config,cancellation);
+        if(prepareModel is not null)await prepareModel(cancellation);
+        cancellation.ThrowIfCancellationRequested();
+    }
     async Task LoopAsync(MonitoringConfiguration config,CancellationToken cancellation)
     {
         await Task.Yield();
@@ -142,7 +149,7 @@ public sealed class MonitorSupervisor(MonitorEngine engine,IStateStore store,
                     await ValidateCurrent(config,cancellation);
                     var ai=config.UploadToModel&&!health.AiSuppressed&&(health.ModelDeferredUntil is null||clock.UtcNow>=health.ModelDeferredUntil);
                     result=await engine.TickAsync(config.Scope(clock.UtcNow),fetch,ai?analyze:null,
-                        config.Model,config.RetentionDays,clock.UtcNow,cancellation,tolerateModelFailure:true,beforeModel:c=>ValidateCurrent(config,c),utcNow:()=>clock.UtcNow);
+                        config.Model,config.RetentionDays,clock.UtcNow,cancellation,tolerateModelFailure:true,beforeModel:c=>PrepareModel(config,c),utcNow:()=>clock.UtcNow);
                     cancellation.ThrowIfCancellationRequested();
                     health=engine.State.Supervisor;
                     if(!result.Complete)throw new MonitoringFault(MonitorFailure.Incomplete);

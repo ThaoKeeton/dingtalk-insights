@@ -225,10 +225,12 @@ internal static class CredentialTests
     internal sealed class CredentialSource:IRuntimeServices
     {
         public int Models,Sends,Reads;public string? LastKey;public Func<CancellationToken,Task>? ModelHold,SendHold,InspectHold;
+        public string MessageText{get;set;}="Synthetic credential evidence";
+        public DateTimeOffset? MessageTime{get;set;}
         public async Task<string> InspectSourceAsync(string executable,string profile,CancellationToken cancellation)
         {if(InspectHold is not null)await InspectHold(cancellation);return Guard.Hash("synthetic-dws");}
         public Task<MessageBatch> ReadAsync(string executable,QueryScope scope,CancellationToken cancellation)
-        {Reads++;return Task.FromResult(new MessageBatch(scope,[new("credential-message",scope.ConversationId,"fixture-user","Synthetic sender","Synthetic credential evidence",scope.End.AddSeconds(-30))],true,[],new Dictionary<string,JsonElement>()));}
+        {Reads++;return Task.FromResult(new MessageBatch(scope,[new("credential-message",scope.ConversationId,"fixture-user","Synthetic sender",MessageText,MessageTime??scope.End.AddSeconds(-30))],true,[],new Dictionary<string,JsonElement>()));}
         public Task<MessageBatch> SearchAsync(string executable,QueryScope scope,string keywords,CancellationToken cancellation)=>throw new Exception("Unexpected search");
         public Task<IReadOnlyList<Conversation>> DiscoverAsync(string executable,string profile,DateTimeOffset start,DateTimeOffset end,CancellationToken cancellation)=>throw new Exception("Unexpected discovery");
         public async Task<ModelResult> AnalyzeAsync(string key,MessageBatch batch,string task,ModelSettings model,CancellationToken cancellation)

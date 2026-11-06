@@ -18,12 +18,14 @@ internal static partial class AcceptanceDriver
         var appWindow=window.AppWindow; // Own the actual native observer through ProcessExit.
         var closingLoop=plugin is null?null:Loop(plugin);
         var closingSession=plugin?.GetType().GetField("session",fields)!.GetValue(plugin);
-        var closeCompletion=((TaskCompletionSource)typeof(MainWindow).GetField("_closeCompleted",fields)!.GetValue(window)!).Task;
+        // Fixed original271 host uses a bool result and replaces this source for each close attempt.
+        // Read its current task at each genuine boundary; never retain the constructor's old source.
+        Task CloseCompletion()=>((TaskCompletionSource<bool>)typeof(MainWindow).GetField("_closeCompleted",fields)!.GetValue(window)!).Task;
         PresenterCloseState Presenter()=>new((bool)typeof(MainWindow).GetField("_closing",fields)!.GetValue(window)!,
             (bool)typeof(MainWindow).GetField("_stopped",fields)!.GetValue(window)!,
             (bool)typeof(MainWindow).GetField("_allowClose",fields)!.GetValue(window)!);
         var before=Presenter();
-        Require(!before.Closing&&!before.Stopped&&!before.AllowClose&&!closeCompletion.IsCompleted,"Presenter was already closing before the actual system request.");
+        Require(!before.Closing&&!before.Stopped&&!before.AllowClose&&!CloseCompletion().IsCompleted,"Presenter was already closing before the actual system request.");
         var closingObserved=false;var closedObserved=false;var destroyingObserved=false;var closeReported=false;var diagnosticFailed=false;var systemRequestAdmitted=false;
         var closeEvents=new List<string>();var sequence=0;var sync=new object();
         JsonElement? destroyedResources=null;string? destroyedDataHash=null;
@@ -62,7 +64,7 @@ internal static partial class AcceptanceDriver
                     observedPresenter=Presenter();var evidence=Capture(observedPresenter);
                     // Only bounded labels, task states, counts, hashes and existing-file lease outcomes.
                     var entry=new{sequence,boundary,events=closeEvents.ToArray(),systemRequestAdmitted,acceptanceFailed=AcceptanceFailed,exitCode=Environment.ExitCode,closingObserved,closedObserved,destroyingObserved,cancelled,handled,
-                        originalPresenterBefore=before,originalPresenter=evidence.Presenter,originalCloseTask=CloseTaskState(closeCompletion),originalLoop=CloseTaskState(closingLoop),
+                        originalPresenterBefore=before,originalPresenter=evidence.Presenter,originalCloseTask=CloseTaskState(CloseCompletion()),originalLoop=CloseTaskState(closingLoop),
                         controllerRetirement=CloseTaskState(evidence.Controller),sessionRetirement=CloseTaskState(evidence.Session),pluginPresent=plugin is not null,
                         active=evidence.Plugin?.GetProperty("Active").GetBoolean(),monitoring=evidence.Plugin?.GetProperty("IsMonitoring").GetBoolean(),
                         pendingPersistence=evidence.Plugin?.GetProperty("AdapterPendingPersistence").GetInt32(),resources=evidence.Plugin?.GetProperty("Resources"),
@@ -76,7 +78,7 @@ internal static partial class AcceptanceDriver
                 {
                     // Preserve the genuine event even if a teardown-time observation itself fails.
                     try{if(sequence<=16)Persist(new{sequence,boundary,events=closeEvents.Take(16).ToArray(),closingObserved,closedObserved,destroyingObserved,
-                        originalPresenterBefore=before,originalPresenter=observedPresenter,originalCloseTask=CloseTaskState(closeCompletion),originalLoop=CloseTaskState(closingLoop),
+                        originalPresenterBefore=before,originalPresenter=observedPresenter,originalCloseTask=CloseTaskState(CloseCompletion()),originalLoop=CloseTaskState(closingLoop),
                         diagnosticErrorType=error.GetType().Name,diagnosticHResult=$"0x{unchecked((uint)error.HResult):X8}"});}
                     catch(Exception){} // A failed durable write still fails acceptance below.
                     Fail(error);return null;
@@ -96,11 +98,11 @@ internal static partial class AcceptanceDriver
                 try
                 {
                     Require(systemRequestAdmitted&&evidence is not null&&!diagnosticFailed&&closedObserved,"Actual admitted system request/native close observations were incomplete.");
-                    // Pinned MainWindow sets _stopped only AFTER Manager.ShutdownAsync and HostRuntime.DisposeAsync;
+                    // Pinned MainWindow sets _stopped only AFTER the actual HostRuntime.DisposeAsync;
                     // _allowClose follows StopAsync and precedes Close(). No driver cleanup method is called.
                     // A later external Closing observer or the private post-Close TCS need not be delivered here.
                     Require(evidence!.Presenter is {Closing:true,Stopped:true,AllowClose:true},"Actual destruction preceded original presenter shutdown/disposal.");
-                    Require(!closeCompletion.IsFaulted&&!closeCompletion.IsCanceled,"Original presenter close task failed.");
+                    Require(!CloseCompletion().IsFaulted&&!CloseCompletion().IsCanceled,"Original presenter close task failed.");
                     if(plugin is not null)
                     {
                         var actual=evidence.Plugin!.Value;var resources=actual.GetProperty("Resources");
@@ -117,7 +119,7 @@ internal static partial class AcceptanceDriver
                     Require(Observe("destruction-retirement-verified") is not null&&!diagnosticFailed,"Close retirement evidence could not be persisted.");
                     observations.Add(new{stage="actual-system-window-close",request="WM_SYSCOMMAND/SC_CLOSE",events=closeEvents.ToArray(),
                         originalPresenterBefore=before,originalPresenterAtDestruction=evidence.Presenter,externalClosingObserved=closingObserved,
-                        originalCloseTask=CloseTaskState(closeCompletion),originalLoop=CloseTaskState(closingLoop),controllerRetirement=CloseTaskState(evidence.Controller),
+                        originalCloseTask=CloseTaskState(CloseCompletion()),originalLoop=CloseTaskState(closingLoop),controllerRetirement=CloseTaskState(evidence.Controller),
                         sessionRetirement=CloseTaskState(evidence.Session),resources=destroyedResources,leases=evidence.Leases,destroyedDataSha256=destroyedDataHash});
                     checks.Add("Actual system Close, Window.Closed and AppWindow.Destroying; original presenter shutdown/disposal markers, real task/resource retirement and all four exclusive existing leases; launcher must verify exit0 and unchanged data");
                     Require(!AcceptanceFailed&&Environment.ExitCode==0,"An earlier acceptance failure prevents provisional close success.");
@@ -127,7 +129,6 @@ internal static partial class AcceptanceDriver
             }
         };
         // These observers only record truth and reject later work; they never initiate or repair cleanup.
-        _=closeCompletion.ContinueWith(_=>Observe("original-close-task-completed"),CancellationToken.None,TaskContinuationOptions.ExecuteSynchronously,TaskScheduler.Default);
         AppDomain.CurrentDomain.ProcessExit+=(_,_)=>Observe("ProcessExit");
         Require(Observe("before-system-close-request") is not null,"Initial close observations could not be persisted.");
         report.WriteReport(new{succeeded=false,stage="closing-"+options.Phase,checks,observations,report.StartupStages});
