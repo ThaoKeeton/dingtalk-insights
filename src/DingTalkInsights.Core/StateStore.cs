@@ -163,10 +163,10 @@ public sealed class InsightState
         foreach(var pair in AttemptSources.Where(p=>p.Value.CreatedAt<cutoff).ToArray())
         {Attempted.Remove(pair.Key);AttemptSources.Remove(pair.Key);}
         // Version-1 hashes cannot be reversed to recover source age. Keep unknown legacy hashes conservatively
-        // for one full configured retention interval after migration; never equate them to the latest revision.
+        // for the maximum supported retention interval after migration, even if the user later expands it.
         if(Attempted.Any(k=>!AttemptSources.ContainsKey(k)))
         {
-            LegacyAttemptsExpireAt??=RetentionReference.AddDays(retentionDays);
+            LegacyAttemptsExpireAt??=RetentionReference.AddDays(365);
             if(RetentionReference>=LegacyAttemptsExpireAt)Attempted.RemoveWhere(k=>!AttemptSources.ContainsKey(k));
         }
         Reports=Reports.Where(r=>r.CreatedAt>=cutoff&&r.OldestSourceAt is {} oldest&&oldest>=cutoff).TakeLast(100).ToList();
