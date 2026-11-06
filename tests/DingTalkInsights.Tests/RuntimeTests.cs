@@ -294,6 +294,37 @@ internal static class RuntimeTests
             await f.Controller.DisconnectAsync();using var legacy=new EncryptedStateStore(Path.Combine(f.CanonicalRoot,"state.dpapi"),f.Cipher,new FixedTime(Now));var saved=legacy.Load();
             Assert(saved.Requests==1&&saved.Attempted.Count==1&&saved.Reports.Count==0&&saved.InputTokens==0&&saved.OutputTokens==0,"failed result was later resurrected by Stop");
         }));
+        yield return ("native demo preview cannot trim a connected canonical thirty day store",()=>Run(async()=>
+        {
+            using var f=new Fixture();SeedOldCanonical(f);Assert(await f.Controller.ConnectAsync(f.CanonicalRoot,true));
+            MonitoringPreview? preview=null;var rejected=false;
+            try{preview=f.Controller.PreviewMonitoring(f.DemoRequest with{RetentionDays=7});}
+            catch(RuntimeFault error){Assert(error.Category==RuntimeFailure.Connection);rejected=true;}
+            // At the old head a preview is issued; running it reproduces destructive policy commit before Connection rejection.
+            if(preview is not null)await Fault(()=>f.Controller.ReadOnceAsync(preview,true),RuntimeFailure.Connection);
+            Assert(f.Services.Calls==0,"demo/canonical mismatch reached a source");await f.Controller.DisconnectAsync();
+            using var store=new BusinessStore(f.CanonicalRoot,f.Cipher,new FixedTime(Now));var state=store.Load();
+            Assert(state.RetentionDays==30&&state.Messages.Count==1&&state.Reports.Count==1,"demo request destructively changed canonical policy/content");
+            Assert(rejected,"canonical connection issued a demo preview");
+        }));
+        yield return ("native read defensively rejects demo source before consuming or trimming canonical state",()=>Run(async()=>
+        {
+            using var f=new Fixture();SeedOldCanonical(f);Assert(await f.Controller.OpenDemoAsync());
+            var preview=f.Controller.PreviewMonitoring(f.DemoRequest with{RetentionDays=7});
+            await f.Controller.DisconnectAsync();Assert(await f.Controller.ConnectAsync(f.CanonicalRoot,true));
+            var writes=f.Cipher.Writes;await Fault(()=>f.Controller.ReadOnceAsync(preview,true),RuntimeFailure.Connection);
+            Assert(f.Cipher.Writes==writes,"incompatible source performed canonical state maintenance");
+            Assert(f.Services.Calls==0&&f.Controller.Snapshot.RetentionDays==30&&f.Controller.Snapshot.History.Count==1);
+            await f.Controller.DisconnectAsync();using var store=new BusinessStore(f.CanonicalRoot,f.Cipher,new FixedTime(Now));
+            var state=store.Load();Assert(state.RetentionDays==30&&state.Messages.Count==1&&state.Reports.Count==1,"incompatible read applied retention effects");
+        }));
+        yield return ("native demo preview validates its fixed identity without source or policy work",()=>Run(async()=>
+        {
+            using var f=new Fixture();Assert(await f.Controller.OpenDemoAsync());
+            foreach(var request in new[]{f.DemoRequest with{Profile="different:identity",RetentionDays=7},f.DemoRequest with{ConversationId="different-room",RetentionDays=7}})
+                await Fault(()=>Task.FromResult(f.Controller.PreviewMonitoring(request)),RuntimeFailure.Connection);
+            Assert(f.Services.Calls==0&&f.Controller.Snapshot.RetentionDays==30,"invalid demo identity changed policy or source");
+        }));
         yield return ("native read rejects selected retention outside thirty day store before any source work",()=>Run(async()=>
         {
             using var f=new Fixture();Assert(await f.Controller.ConnectAsync(f.CanonicalRoot,true));
@@ -384,6 +415,12 @@ internal static class RuntimeTests
             Assert(await production.ConnectAsync(f.CanonicalRoot,true));Assert(await production.ReadOnceAsync(f.Request with{Executable=dws.Executable},true));
             Assert(dws.Reads==1&&production.Snapshot.Candidates.Single().MessageId=="synthetic-message");
         }));
+    }
+    static void SeedOldCanonical(Fixture fixture)
+    {
+        using var store=new BusinessStore(fixture.CanonicalRoot,fixture.Cipher,new FixedTime(Now));var state=store.Load();
+        var batch=FakeServices.Batch(new("corp:user","old-canonical-room",Now.AddDays(-10),Now.AddDays(-10).AddHours(1)));
+        state.Ingest(batch);state.Reports.Add(new(Now,batch.Scope.Key,"Synthetic old task","Synthetic old report",false,batch.Messages[0].CreatedAt));store.Save(state);
     }
     internal sealed class Fixture:IDisposable
     {

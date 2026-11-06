@@ -50,9 +50,9 @@ internal static partial class AcceptanceDriver
             Require(Fingerprint(installed.PackagePath)==packageHash,"Installed package bytes differ from approved source.");
             Require(!(await manager.EnableAsync(Id)).Succeeded&&!manager.Plugins.Single().IsLoaded,"Trust denial loaded plugin.");
             Record("Actual install disabled/untrusted/unloaded, exact package fingerprint, duplicate rejection and trust denial");
-            await TrustThroughPresenter(window,manager,false);
+            await TrustThroughPresenter(window,manager,false,observations);
             Require(!manager.Plugins.Single().IsTrusted&&!manager.Plugins.Single().IsLoaded,"Real trust cancel activated plugin.");
-            await TrustThroughPresenter(window,manager,true);
+            await TrustThroughPresenter(window,manager,true,observations);
             Require(manager.Plugins.Single().State==PluginState.Enabled,"Real trust confirmation did not enable plugin.");
             Record("Ordinary presenter Enable button and actual native trust dialog cancel/confirm");
             plugin=PluginTarget(manager);
@@ -100,7 +100,7 @@ internal static partial class AcceptanceDriver
             observations.Add(new{stage="monitor-stop",initialDispatches=reads,resources=stopped,stateHash});
             Record("Production controller/MonitorSupervisor demo loop survives page recreation singly; Stop joins real task with zero later dispatch or state writes");
             await Start(window,page,plugin);
-            var old=plugin;var activeTask=Loop(old);await DisableThroughPresenter(window,manager);
+            var old=plugin;var activeTask=Loop(old);await DisableThroughPresenter(window,manager,observations);
             Require(activeTask.IsCompleted&&!(Observation(old).GetProperty("Active").GetBoolean()),"Disable left live monitor/controller.");
             var retired=Resources(old);Require(retired.GetProperty("Subscriptions").GetInt32()==0&&retired.GetProperty("PendingOperations").GetInt32()==0&&!retired.GetProperty("StoreOwned").GetBoolean(),"Disable retained subscriptions/operations/lease.");
             Require(manager.Contributions.Views.All(v=>v.PluginId!=Id),"Disable retained native registrations.");
@@ -108,7 +108,7 @@ internal static partial class AcceptanceDriver
             var afterDisable=Fingerprint(data);await Task.Delay(200);Require(Fingerprint(data)==afterDisable,"Disabled plugin wrote state later.");
             observations.Add(new{stage="disabled",resources=retired});
             Record("Actual presenter active disable removes contributions and fully retires tasks/subscriptions/leases; assemblies remain loaded");
-            await TrustThroughPresenter(window,manager,true);plugin=PluginTarget(manager);
+            await TrustThroughPresenter(window,manager,true,observations);plugin=PluginTarget(manager);
             Require(!Observation(plugin).GetProperty("IsMonitoring").GetBoolean()&&Resources(plugin).GetProperty("Dispatches").GetInt64()==0,"Re-enable restored business authority.");
             settings=await Settings(window);Invoke(Find<Button>(settings,"DTI 载入设置"));await Wait(()=>Find<TextBlock>(settings,"DTI 操作结果").Text.Contains("已载入配置"),"Re-enable load failed.");
             Require(Find<TextBox>(settings,"DTI 轮询秒数").Text=="60"&&Find<TextBox>(settings,"DTI 整理事项").Text==Draft,"Saved setting/draft roundtrip failed.");
@@ -134,7 +134,7 @@ internal static partial class AcceptanceDriver
         {
             var changed=manager.Plugins.Single();Require(changed.Manifest?.Id==Id&&!changed.IsTrusted&&!changed.IsLoaded&&changed.State!=PluginState.Enabled,"Changed package inherited trust/load.");
             Require(!(await manager.EnableAsync(Id)).Succeeded,"Changed package enabled without fresh trust.");
-            await TrustThroughPresenter(window,manager,false);
+            await TrustThroughPresenter(window,manager,false,observations);
             Require(!manager.Plugins.Single().IsLoaded,"Changed-package cancel loaded assembly.");
             Record("Actual discover/restore fingerprint change rejects old approval; enable denied and fresh real dialog cancelled");
         }
@@ -187,18 +187,50 @@ internal static partial class AcceptanceDriver
         await ConfirmAction(window,page,"DTI 开始监控",true);
         await Wait(()=>Observation(plugin).GetProperty("IsMonitoring").GetBoolean()&&!Loop(plugin).IsCompleted&&Observation(plugin).GetProperty("Health").GetProperty("NextReadAt").ValueKind==JsonValueKind.String,"Production demo supervisor did not reach actual scheduled wait.");
     }
-    static async Task TrustThroughPresenter(MainWindow window,PluginManager manager,bool approve)
+    static bool PresenterEnabled(MainWindow window)=>Find<NavigationView>((FrameworkElement)window.Content,"工作台导航").IsEnabled;
+    static Task WaitPresenterReady(MainWindow window)=>Wait(()=>!OpenDialogs(window).Any()&&PresenterEnabled(window),
+        "Presenter action did not finish restoring native navigation/content enablement.");
+    static Task WaitAttachedEnabled(MainWindow window,Button target)=>Wait(()=>target.IsLoaded&&target.XamlRoot is not null&&target.IsEnabled&&PresenterEnabled(window)&&!OpenDialogs(window).Any(),
+        "Presenter target did not become attached, loaded and effectively enabled.");
+    static async Task TrustThroughPresenter(MainWindow window,PluginManager manager,bool approve,List<object> observations)
     {
         CurrentStep=approve?"presenter-enable-confirm":"presenter-enable-cancel";
-        var page=await window.SmokeNavigateAsync("plugins");Invoke(Find<Button>(page,"启用 钉钉沟通事项"));
-        if(!manager.Plugins.Single().IsTrusted)await Dialog(window,approve,"信任并启用");
-        await Wait(()=>!OpenDialogs(window).Any()&&window.SmokeNavigationAvailable,"Trust presenter did not settle.");
+        await WaitPresenterReady(window);
+        var page=await window.SmokeNavigateAsync("plugins");var enable=Find<Button>(page,"启用 钉钉沟通事项");
+        await WaitAttachedEnabled(window,enable);var wasTrusted=manager.Plugins.Single().IsTrusted;
+        Require(approve||!wasTrusted,"Real cancel test requires an untrusted package.");Invoke(enable);
+        if(!wasTrusted)await Dialog(window,approve,"信任并启用");
+        var navigationEnabledBeforeCompletionWait=PresenterEnabled(window);
+        // Popup dismissal can precede ShowAsync/RunAsync completion. Settings visibility is not an idle signal.
+        CurrentStep=approve?"presenter-enable-completion":"presenter-cancel-completion";
         if(approve)await Wait(()=>manager.Plugins.Single().State==PluginState.Enabled,"Real presenter enable failed.");
+        await WaitPresenterReady(window);
+        if(!approve)
+        {
+            var cancelled=manager.Plugins.Single();
+            Require(cancelled.State==PluginState.Disabled&&!cancelled.IsTrusted&&!cancelled.IsLoaded&&!cancelled.DesiredEnabled,
+                "Completed real trust cancel changed package trust/load/enabled intent.");
+        }
+        var fresh=await window.SmokeNavigateAsync("plugins");
+        var target=Find<Button>(fresh,approve?"停用 钉钉沟通事项":"启用 钉钉沟通事项");await WaitAttachedEnabled(window,target);
+        var freshPage=!ReferenceEquals(page,fresh);var freshTarget=!ReferenceEquals(enable,target);
+        Require(freshPage&&freshTarget,"Presenter completion reused the previous page/action control.");
+        observations.Add(new{stage=approve?"presenter-enable-complete":"presenter-cancel-complete",trustDialogShown=!wasTrusted,navigationEnabledBeforeCompletionWait,
+            navigationEnabledAfterCompletion=PresenterEnabled(window),popupClosed=!OpenDialogs(window).Any(),freshPage,freshTarget,
+            targetLoaded=target.IsLoaded,targetAttached=target.XamlRoot is not null,targetEffectivelyEnabled=target.IsEnabled,
+            state=manager.Plugins.Single().State.ToString(),trusted=manager.Plugins.Single().IsTrusted,loaded=manager.Plugins.Single().IsLoaded});
     }
-    static async Task DisableThroughPresenter(MainWindow window,PluginManager manager)
+    static async Task DisableThroughPresenter(MainWindow window,PluginManager manager,List<object> observations)
     {
-        var page=await window.SmokeNavigateAsync("plugins");Invoke(Find<Button>(page,"停用 钉钉沟通事项"));
+        CurrentStep="presenter-disable";await WaitPresenterReady(window);
+        var page=await window.SmokeNavigateAsync("plugins");var disable=Find<Button>(page,"停用 钉钉沟通事项");await WaitAttachedEnabled(window,disable);Invoke(disable);
         await Wait(()=>manager.Plugins.Single().State==PluginState.Disabled&&manager.Contributions.Views.All(v=>v.PluginId!=Id),"Real presenter disable failed.");
+        await WaitPresenterReady(window);var fresh=await window.SmokeNavigateAsync("plugins");var enable=Find<Button>(fresh,"启用 钉钉沟通事项");await WaitAttachedEnabled(window,enable);
+        var freshPage=!ReferenceEquals(page,fresh);var freshTarget=!ReferenceEquals(disable,enable);
+        Require(freshPage&&freshTarget,"Disable completion reused the previous action control.");
+        observations.Add(new{stage="presenter-disable-complete",navigationEnabled=PresenterEnabled(window),popupClosed=!OpenDialogs(window).Any(),
+            freshPage,freshTarget,targetLoaded=enable.IsLoaded,targetAttached=enable.XamlRoot is not null,targetEffectivelyEnabled=enable.IsEnabled,
+            state=manager.Plugins.Single().State.ToString(),remainingViews=manager.Contributions.Views.Count(v=>v.PluginId==Id)});
     }
     static async Task ConfirmAction(MainWindow window,FrameworkElement page,string name,bool approve)
     {CurrentStep=name switch{"DTI 开始监控"=>"native-monitor-start","DTI 读取一次"=>"native-read-once","DTI 搜索"=>"native-search","DTI 整理候选"=>"native-analysis",_=>"native-confirmed-action"};Invoke(Find<Button>(page,name));await Dialog(window,approve,"确认本次操作");await Task.Delay(40);}

@@ -4,12 +4,21 @@ namespace DingTalkInsights.Runtime;
 
 public sealed partial class InsightController
 {
-    async Task<MonitoringConfiguration> BuildConfiguration(MonitoringRequest request,long expected,CancellationToken cancellation)
+    // Memory-only compatibility checks must precede previews and any approved policy/content mutation.
+    void ValidateSourceConnection(MonitoringRequest request)
     {
-        request.Validate();lock(sync)EnsureCurrent(expected,cancellation);
+        request.Validate();
         if(request.Source=="demo")
         {
             if(connection!=RuntimeConnection.Demo||request.Profile!=demo.Scope.Profile||request.ConversationId!=demo.Scope.ConversationId)throw new RuntimeFault(RuntimeFailure.Connection);
+        }
+        else RequireCanonical();
+    }
+    async Task<MonitoringConfiguration> BuildConfiguration(MonitoringRequest request,long expected,CancellationToken cancellation)
+    {
+        lock(sync){EnsureCurrent(expected,cancellation);ValidateSourceConnection(request);}
+        if(request.Source=="demo")
+        {
             return new("demo",request.Profile,request.ConversationId,request.Start,"","",request.UploadToModel,request.Model,request.PollSeconds,request.RetentionDays,"");
         }
         RequireCanonical();
@@ -61,9 +70,10 @@ public sealed partial class InsightController
     Task<bool> ReadOnceCore(MonitoringRequest request,MonitoringPreview? preview,bool confirmed,CancellationToken cancellation)
     {
         if(!confirmed)return Task.FromResult(false);
+        lock(sync){EnsureActive();RequireStore();ValidateSourceConnection(request);}
         return Run(async operation=>
         {
-            RequireStore();
+            RequireStore();Commit(operation,()=>ValidateSourceConnection(request));
             if(preview is not null)Commit(operation,()=>
             {
                 RequireStopped();Consume(preview.Authority,operation);

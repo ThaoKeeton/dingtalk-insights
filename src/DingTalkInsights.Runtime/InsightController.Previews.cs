@@ -28,7 +28,7 @@ public sealed partial class InsightController
             EnsureActive();RequireStore();RequireStopped();if(pending.Count>0||stopCount>0)throw new RuntimeFault(RuntimeFailure.Busy);
             try
             {
-                request.Validate();if(request.Source=="dws")RequireCanonical();
+                ValidateSourceConnection(request);
                 var now=RetentionNow();var initial=new QueryScope(request.Profile,request.ConversationId,request.Start,clock.UtcNow);
                 var next=MonitorEngine.NextScope(state,initial,clock.UtcNow);DateTimeOffset? covered=null;CoveredRange? abandoned=null;
                 if(state.Monitoring is {} prior&&prior.Scope(clock.UtcNow).Key==initial.Key)
