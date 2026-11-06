@@ -26,6 +26,44 @@ function Assert-OwnedRoot([string]$Root, [string]$RunId) {
     $owner = Get-Content -LiteralPath "$Root/.dti-acceptance-owner.json" -Raw | ConvertFrom-Json
     if ($owner.runId -ne $RunId) { throw 'Acceptance marker mismatch' }
 }
+function Safe-NativeLabel([object]$Value, [int]$Limit = 220) {
+    $text = [string]$Value
+    $text = [regex]::Replace($text, '[^\p{L}\p{N} .,:;_()/+\-]', ' ')
+    if ($text.Length -gt $Limit) { $text = $text.Substring(0, $Limit) }
+    return $text
+}
+function Safe-NativeFrames($Frames) {
+    if ($null -eq $Frames) { return @() }
+    return @($Frames | Select-Object -First 5 | ForEach-Object {
+        [ordered]@{ type = (Safe-NativeLabel $_.Type 160); method = (Safe-NativeLabel $_.Method 100); file = (Safe-NativeLabel $_.File 100); line = [int]$_.Line }
+    })
+}
+function New-NativeFailureSummary($Result, [bool]$ParseFailed, [string]$StderrText) {
+    $stage = if ($ParseFailed) { 'invalid-native-report' } elseif ($null -eq $Result) { 'missing-native-report' } else { $Result.stage }
+    $errorType = $Result.errorType
+    # Compatibility with original RunOptions failure artifacts: extract the type only, never the exception body.
+    if (-not $errorType -and $Result.error -match '^([A-Za-z_][A-Za-z0-9_.+]{0,159}):') { $errorType = $Matches[1] }
+    $hresult = if ([string]$Result.errorHResult -match '^0x[0-9A-Fa-f]{8}$') { [string]$Result.errorHResult } else { '' }
+    $checks = @($Result.checks)
+    $startup = @($Result.startupStages)
+    $factory = $Result.pluginDiagnostics.ViewFailure
+    return [ordered]@{
+        stage = (Safe-NativeLabel $stage)
+        errorType = (Safe-NativeLabel $errorType 160)
+        hResult = $hresult
+        acceptanceStep = (Safe-NativeLabel $Result.acceptanceStep 100)
+        ownedAssertion = (Safe-NativeLabel $Result.ownedAssertion)
+        lastCompletedCheck = if ($checks.Count) { Safe-NativeLabel $checks[-1] } else { '' }
+        lastStartupStage = if ($startup.Count) { Safe-NativeLabel $startup[-1].stage 100 } else { '' }
+        factoryView = (Safe-NativeLabel $factory.View 40)
+        factoryErrorType = (Safe-NativeLabel $factory.ErrorType 160)
+        factoryHResult = if ([string]$factory.HResult -match '^0x[0-9A-Fa-f]{8}$') { [string]$factory.HResult } else { '' }
+        frames = @(Safe-NativeFrames $Result.frames)
+        factoryFrames = @(Safe-NativeFrames $factory.Frames)
+        stderrHResults = @([regex]::Matches($StderrText, '(?i)\bHRESULT\s*[:=]?\s*(0x[0-9a-f]{8})\b') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique -First 3)
+        stderrCharacters = $StderrText.Length
+    }
+}
 function Invoke-Phase([string]$HostDir, [string]$PackageDir, [string]$Root, [string]$RunId, [string]$Phase, [string]$Variant) {
     Assert-OwnedRoot $Root $RunId
     $exe = Join-Path $HostDir 'DingTalkInsights.Workbench.AcceptanceHost.exe'
@@ -61,10 +99,20 @@ function Invoke-Phase([string]$HostDir, [string]$PackageDir, [string]$Root, [str
         }
         $exitCode = $process.ExitCode
         $stdout.WaitAsync([TimeSpan]::FromSeconds(10)).GetAwaiter().GetResult() | Set-Content -LiteralPath "$evidence/$Variant-$Phase.stdout.txt"
-        $stderr.WaitAsync([TimeSpan]::FromSeconds(10)).GetAwaiter().GetResult() | Set-Content -LiteralPath "$evidence/$Variant-$Phase.stderr.txt"
-        if (Test-Path -LiteralPath $reportPath) { $result = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json }
+        $childStderr = $stderr.WaitAsync([TimeSpan]::FromSeconds(10)).GetAwaiter().GetResult()
+        $childStderr | Set-Content -LiteralPath "$evidence/$Variant-$Phase.stderr.txt"
+        $parseFailed = $false
+        if (Test-Path -LiteralPath $reportPath) {
+            try { $result = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json }
+            catch { $parseFailed = $true }
+        }
         $passed = -not $timedOut -and $exitCode -eq 0 -and $null -ne $result -and $result.succeeded
-        $phaseResult = [ordered]@{ succeeded = $passed; variant = $Variant; phase = $Phase; processId = $ownedPid; timedOut = $timedOut; exitCode = $exitCode; actualExitVerified = $true; provisionalNativeResult = $result }
+        $summary = $null
+        if (-not $passed) {
+            $summary = New-NativeFailureSummary $result $parseFailed $childStderr
+            Write-Host ("Native failure summary ($Variant/$Phase, exit=$exitCode, timeout=$timedOut): " + ($summary | ConvertTo-Json -Compress -Depth 5))
+        }
+        $phaseResult = [ordered]@{ succeeded = $passed; variant = $Variant; phase = $Phase; processId = $ownedPid; timedOut = $timedOut; exitCode = $exitCode; actualExitVerified = $true; failureSummary = $summary; provisionalNativeResult = $result }
         $phaseResult | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath "$evidence/$Variant-$Phase.final.json"
         $script:final.runs += $phaseResult
         if (-not $passed) { throw "Native phase failed: $Variant/$Phase; timeout=$timedOut; exit=$exitCode. Provisional success cannot override this failure." }

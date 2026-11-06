@@ -38,7 +38,7 @@ public sealed partial class InsightController
                 }
                 var cutoff=now.AddDays(-request.RetentionDays);
                 return new(NewAuthority(request.Source=="dws"&&request.UploadToModel?CredentialUse.Model:CredentialUse.None),request,next,covered,abandoned,
-                    state.Messages.Values.Count(m=>m.Message.CreatedAt<cutoff),state.Reports.Count(r=>r.OldestSourceAt is null||r.OldestSourceAt<cutoff),next.Start>=cutoff);
+                    state.Messages.Values.Count(m=>m.Message.CreatedAt<cutoff),state.Reports.Count(r=>r.CreatedAt<cutoff||r.OldestSourceAt is null||r.OldestSourceAt<cutoff),next.Start>=cutoff);
             }
             catch(RuntimeFault){throw;}
             catch(Exception){throw new RuntimeFault(RuntimeFailure.Configuration);}

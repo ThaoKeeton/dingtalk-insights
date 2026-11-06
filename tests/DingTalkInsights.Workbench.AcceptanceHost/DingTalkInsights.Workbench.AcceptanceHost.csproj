@@ -18,6 +18,11 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
     <ProjectReference Include="$(WorkbenchSnapshotRoot)/src/Workbench.Core/Workbench.Core.csproj" />
     <ProjectReference Include="$(WorkbenchSnapshotRoot)/src/Workbench.WinUI.Sdk/Workbench.WinUI.Sdk.csproj" />
+    <!-- Separate source-linked production-control fixture; never reference/preload the business plugin DLL. -->
+    <ProjectReference Include="../../src/DingTalkInsights.Runtime/DingTalkInsights.Runtime.csproj" />
+    <Compile Include="../../src/DingTalkInsights.Workbench/InsightPage.cs" Link="ProductionAdapter/InsightPage.cs" />
+    <Compile Include="../../src/DingTalkInsights.Workbench/PluginSession.cs" Link="ProductionAdapter/PluginSession.cs" />
+    <Compile Include="../../src/DingTalkInsights.Workbench/NativeActionGate.cs" Link="ProductionAdapter/NativeActionGate.cs" />
     <ApplicationDefinition Include="$(WorkbenchSnapshotRoot)/src/Workbench.App/App.xaml" Link="App.xaml" />
     <Compile Include="$(WorkbenchSnapshotRoot)/src/Workbench.App/MainWindow.cs" Link="Presenter/MainWindow.cs" />
     <Compile Include="$(WorkbenchSnapshotRoot)/src/Workbench.App/ShellPages.cs" Link="Presenter/ShellPages.cs" />

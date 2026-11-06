@@ -294,6 +294,63 @@ internal static class RuntimeTests
             await f.Controller.DisconnectAsync();using var legacy=new EncryptedStateStore(Path.Combine(f.CanonicalRoot,"state.dpapi"),f.Cipher,new FixedTime(Now));var saved=legacy.Load();
             Assert(saved.Requests==1&&saved.Attempted.Count==1&&saved.Reports.Count==0&&saved.InputTokens==0&&saved.OutputTokens==0,"failed result was later resurrected by Stop");
         }));
+        yield return ("native read rejects selected retention outside thirty day store before any source work",()=>Run(async()=>
+        {
+            using var f=new Fixture();Assert(await f.Controller.ConnectAsync(f.CanonicalRoot,true));
+            var request=f.Request with{Start=Now.AddDays(-10),RetentionDays=7};var preview=f.Controller.PreviewMonitoring(request);
+            Assert(!preview.WithinRetention&&f.Controller.Snapshot.RetentionDays==30);
+            await Fault(()=>f.Controller.ReadOnceAsync(preview,true),RuntimeFailure.Retention);
+            Assert(f.Services.Inspections==0&&f.Services.Reads==0&&f.Controller.Snapshot.Candidates.Count==0,"out-of-policy read reached source");
+            await f.Controller.DisconnectAsync();using var store=new BusinessStore(f.CanonicalRoot,f.Cipher,new FixedTime(Now));
+            var saved=store.Load();Assert(saved.Messages.Count==0&&saved.Receipts.Count==0&&saved.RetentionDays==30,"rejected preview applied policy or stored content");
+        }));
+        yield return ("native read checks selected retention against monotonic time before inspection",()=>Run(async()=>
+        {
+            using var f=new Fixture();Assert(await f.Controller.ConnectAsync(f.CanonicalRoot,true));
+            var preview=f.Controller.PreviewMonitoring(f.Request with{Start=Now.AddDays(-7).AddMinutes(1),RetentionDays=7});Assert(preview.WithinRetention);
+            f.Clock.Advance(TimeSpan.FromMinutes(2));_ = f.Controller.Snapshot;f.Clock.Advance(TimeSpan.FromMinutes(-2));
+            await Fault(()=>f.Controller.ReadOnceAsync(preview,true),RuntimeFailure.Retention);
+            Assert(f.Services.Calls==0&&f.Controller.Snapshot.Candidates.Count==0,"clock rollback reopened expired selected window");
+        }));
+        yield return ("native read rechecks selected retention after pending source inspection",()=>Run(async()=>
+        {
+            using var f=new Fixture();Assert(await f.Controller.ConnectAsync(f.CanonicalRoot,true));
+            var preview=f.Controller.PreviewMonitoring(f.Request with{Start=Now.AddDays(-7).AddMinutes(1),RetentionDays=7});
+            f.Services.Inspect=(path,identity,token)=>{f.Clock.Advance(TimeSpan.FromMinutes(2));return Task.FromResult(Guard.Hash("synthetic-executable"));};
+            await Fault(()=>f.Controller.ReadOnceAsync(preview,true),RuntimeFailure.Retention);
+            Assert(f.Services.Inspections==1&&f.Services.Reads==0,"pending inspection let the reviewed source window expire before reading");
+        }));
+        yield return ("native read persists explicitly approved retention trim before source inspection",()=>Run(async()=>
+        {
+            using var f=new Fixture();
+            using(var store=new BusinessStore(f.CanonicalRoot,f.Cipher,new FixedTime(Now)))
+            {
+                var state=store.Load();var batch=FakeServices.Batch(new("corp:user","trim-fixture",Now.AddDays(-10),Now.AddDays(-10).AddHours(1)));
+                state.Ingest(batch);state.Reports.Add(new(Now,batch.Scope.Key,"Synthetic old task","Synthetic old report",false,batch.Messages[0].CreatedAt));store.Save(state);
+            }
+            Assert(await f.Controller.ConnectAsync(f.CanonicalRoot,true));var preview=f.Controller.PreviewMonitoring(f.Request with{Start=Now.AddMinutes(-10),RetentionDays=7});
+            Assert(preview.WithinRetention&&preview.ExpiringMessages==1&&preview.ExpiringReports==1);
+            Assert(!await f.Controller.ReadOnceAsync(preview,false)&&f.Controller.Snapshot.RetentionDays==30&&f.Controller.Snapshot.History.Count==1);
+            f.Services.Inspect=(path,identity,token)=>
+            {
+                var state=JsonSerializer.Deserialize<InsightState>(f.Cipher.Unprotect(File.ReadAllBytes(Path.Combine(f.CanonicalRoot,"state.dpapi"))))!;
+                Assert(state.RetentionDays==7&&state.Messages.Count==0&&state.Reports.Count==0,"source inspected before approved trim was durable");
+                return Task.FromResult(Guard.Hash("synthetic-executable"));
+            };
+            Assert(await f.Controller.ReadOnceAsync(preview,true));Assert(f.Services.Reads==1&&f.Controller.Snapshot.RetentionDays==7&&f.Controller.Snapshot.History.Count==0);
+        }));
+        yield return ("native read requires a new preview if displayed retention effects changed",()=>Run(async()=>
+        {
+            using var f=new Fixture();
+            using(var store=new BusinessStore(f.CanonicalRoot,f.Cipher,new FixedTime(Now)))
+            {
+                var state=store.Load();state.Ingest(FakeServices.Batch(new("corp:user","trim-fixture",Now.AddDays(-7),Now.AddDays(-7).AddMinutes(2))));store.Save(state);
+            }
+            Assert(await f.Controller.ConnectAsync(f.CanonicalRoot,true));var preview=f.Controller.PreviewMonitoring(f.Request with{Start=Now.AddMinutes(-10),RetentionDays=7});
+            Assert(preview.WithinRetention&&preview.ExpiringMessages==0);f.Clock.Advance(TimeSpan.FromMinutes(2));
+            await Fault(()=>f.Controller.ReadOnceAsync(preview,true),RuntimeFailure.Configuration);
+            Assert(f.Services.Calls==0&&f.Controller.Snapshot.RetentionDays==30,"stale trim effects were applied without review");
+        }));
         yield return ("native read preview fixes authorized window across confirmation delay",()=>Run(async()=>
         {
             using var f=new Fixture();await f.Controller.ConnectAsync(f.CanonicalRoot,true);

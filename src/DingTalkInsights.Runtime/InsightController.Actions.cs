@@ -64,10 +64,25 @@ public sealed partial class InsightController
         return Run(async operation=>
         {
             RequireStore();
-            if(preview is not null)Commit(operation,()=>{RequireStopped();Consume(preview.Authority,operation);});
+            if(preview is not null)Commit(operation,()=>
+            {
+                RequireStopped();Consume(preview.Authority,operation);
+                var now=RetentionNow();var cutoff=now.AddDays(-request.RetentionDays);
+                if(!preview.WithinRetention||preview.NextRead.Start<cutoff)throw new RuntimeFault(RuntimeFailure.Retention);
+                var expiringMessages=state.Messages.Values.Count(m=>m.Message.CreatedAt<cutoff);
+                var expiringReports=state.Reports.Count(r=>r.CreatedAt<cutoff||r.OldestSourceAt is null||r.OldestSourceAt<cutoff);
+                if(expiringMessages!=preview.ExpiringMessages||expiringReports!=preview.ExpiringReports)throw new RuntimeFault(RuntimeFailure.Configuration);
+                // The confirmation covers these exact trim effects and policy. Commit before inspecting/reading a source.
+                state.Trim(now,request.RetentionDays);EnforceRetention();store!.Save(state);
+                var initial=new QueryScope(request.Profile,request.ConversationId,request.Start,preview.NextRead.End);
+                if(MonitorEngine.NextScope(state,initial,preview.NextRead.End)!=preview.NextRead)throw new RuntimeFault(RuntimeFailure.Configuration);
+            });
             var config=await BuildConfiguration(request with{UploadToModel=false},operation.Generation,operation.Token);
+            if(preview is not null)Commit(operation,()=>
+            {
+                if(preview.NextRead.Start<RetentionNow().AddDays(-request.RetentionDays))throw new RuntimeFault(RuntimeFailure.Retention);
+            });
             var through=preview?.NextRead.End??clock.UtcNow;
-            if(preview is not null&&MonitorEngine.NextScope(state,config.Scope(through),through)!=preview.NextRead)throw new RuntimeFault(RuntimeFailure.Configuration);
             MessageBatch? fetched=null;var engine=new MonitorEngine(state,OwnedStore(operation.Generation));
             var result=await engine.TickAsync(config.Scope(through),async(scope,token)=>fetched=await Fetch(config,scope,operation.Generation,token),null,config.Model,state.RetentionDays,through,operation.Token);
             Commit(operation,()=>{previews.Clear();candidates=Limit(fetched!);notice=result.Complete?"本次原文已采集到本机；完整性和来源仍需核对。":"本次采集不完整，断点未跨过未知范围。";});

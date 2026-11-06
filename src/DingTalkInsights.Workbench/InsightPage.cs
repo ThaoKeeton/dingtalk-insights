@@ -32,12 +32,13 @@ internal sealed class InsightPage:UserControl
     readonly CheckBox useModel=Named(new CheckBox{Content="仅模型用途"},"DTI 凭据用于模型"),useWebhook=Named(new CheckBox{Content="仅人工 Webhook 用途"},"DTI 凭据用于 Webhook");
     Button? begin;
     SnapshotBinding? binding;
-    bool loaded,rendering,busy;
+    bool loaded,rendering;
+    readonly NativeActionGate actions;
     long attachment;
 
-    public InsightPage(PluginSession session,bool settings)
+    public InsightPage(PluginSession session,bool settings,NativeActionGate? actions=null)
     {
-        this.session=session;controller=session.Controller;
+        this.session=session;controller=session.Controller;this.actions=actions??new();
         Named(this,settings?"DTI 原生设置":"DTI 原生工作区");
         HorizontalContentAlignment=HorizontalAlignment.Stretch;Content=new ScrollViewer{HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,HorizontalContentAlignment=HorizontalAlignment.Stretch,Content=body};
         body.Children.Add(Text(settings?"钉钉沟通事项 · 设置":"钉钉沟通事项",26));
@@ -59,7 +60,7 @@ internal sealed class InsightPage:UserControl
         Add(demo,upload);
         Add(Action("打开模拟本机库","DTI 打开模拟",async()=>{await Work(()=>controller.OpenDemoAsync());}));
         body.Children.Add(Text("身份、会话、时间、DWS 路径与限额在插件设置中明确填写并保存。真实来源须先连接标准独立版账本，再按每次预览授权。"));
-        Add(Action("读取一次…","DTI 读取一次",Read),Action("预览并开始监控…","DTI 开始监控",Begin,out begin),Action("停止并等待退役","DTI 停止监控",async()=>{await Work(controller.StopMonitoringAsync);}));
+        Add(Action("读取一次…","DTI 读取一次",Read),Action("预览并开始监控…","DTI 开始监控",Begin,out begin),Action("停止并等待退役","DTI 停止监控",async()=>{await Work(controller.StopMonitoringAsync);},stop:true));
         Add(keywords,dwsSearch,Action("搜索…","DTI 搜索",Search));
         Add(candidates,Action("预览并整理候选…","DTI 整理候选",Analyze),report);
         Add(issue,Action("复核证据并确认解决…","DTI 人工确认解决",Resolve),Action("复制 Markdown","DTI 复制 Markdown",Copy));
@@ -131,7 +132,7 @@ internal sealed class InsightPage:UserControl
     {
         var request=session.CaptureRequest(demo.IsChecked==true,false);
         var preview=controller.PreviewMonitoring(request);
-        if(await Confirm("读取本次范围",$"{request.Source}\n本次确切有界窗口：{preview.NextRead.Display}\nDWS：{request.Executable}\n原文只写入本机加密账本，本次不调用模型。"))await Work(()=>controller.ReadOnceAsync(preview,true));
+        if(await Confirm("读取本次范围",$"{request.Source}\n本次确切有界窗口：{preview.NextRead.Display}\nDWS：{request.Executable}\n明确采用保留 {request.RetentionDays} 天；本次窗口在所选保留期内：{preview.WithinRetention}\n确认后先按该策略清理 {preview.ExpiringMessages} 条旧消息 / {preview.ExpiringReports} 份旧结果并持久化，再读取上述固定窗口。超期窗口会在任何来源检查前拒绝；效果改变须重新预览。\n原文只写入本机加密账本，本次不调用模型。"))await Work(()=>controller.ReadOnceAsync(preview,true));
     }
     async Task Begin()
     {
@@ -214,19 +215,21 @@ internal sealed class InsightPage:UserControl
         var dialog=new ContentDialog{XamlRoot=XamlRoot,Title=title,Content=text,PrimaryButtonText=primary,CloseButtonText="取消",DefaultButton=ContentDialogButton.Close};
         var result=await dialog.ShowAsync();return loaded&&attachment==epoch&&controller.Snapshot.Active&&result==ContentDialogResult.Primary;
     }
-    async Task Safe(Func<Task> action)
+    async Task Safe(Func<Task> action,bool stop=false)
     {
-        if(!loaded||busy||!controller.Snapshot.Active)return;
-        var epoch=attachment;busy=true;
-        try{await action();}
-        catch(SafetyException error){if(loaded&&attachment==epoch)notice.Text=error.Message;}
-        catch(Exception){if(loaded&&attachment==epoch)notice.Text="本机操作未完成；未显示传输正文或凭据，请核对配置或存储。";}
-        finally{busy=false;}
+        if(!loaded||!controller.Snapshot.Active)return;
+        var epoch=attachment;
+        await actions.RunAsync(async()=>
+        {
+            try{await action();}
+            catch(SafetyException error){if(loaded&&attachment==epoch)notice.Text=error.Message;}
+            catch(Exception){if(loaded&&attachment==epoch)notice.Text="本机操作未完成；未显示传输正文或凭据，请核对配置或存储。";}
+        },stop);
     }
     static Task<T> Work<T>(Func<Task<T>> action)=>PluginSession.Worker(action);
     static Task Work(Func<Task> action)=>PluginSession.Worker(action);
-    Button Action(string label,string name,Func<Task> action)
-    {var button=Named(new Button{Content=label,HorizontalAlignment=HorizontalAlignment.Left},name);button.Click+=async(_,_)=>await Safe(action);return button;}
+    Button Action(string label,string name,Func<Task> action,bool stop=false)
+    {var button=Named(new Button{Content=label,HorizontalAlignment=HorizontalAlignment.Left},name);button.Click+=async(_,_)=>await Safe(action,stop);return button;}
     Button Action(string label,string name,Func<Task> action,out Button? button)=>button=Action(label,name,action);
     void Add(params UIElement[] elements){foreach(var element in elements)body.Children.Add(element);}
     static T Named<T>(T value,string name)where T:DependencyObject{AutomationProperties.SetName(value,name);return value;}

@@ -13,7 +13,7 @@ public sealed partial class WorkbenchApplication:Application
         harness=HarnessOptions.Parse(Environment.GetCommandLineArgs().Skip(1).ToArray());
         options=new RunOptions(false,harness.UserRoot,harness.Report);
         options.TraceStartup("isolated-sdk-generated-main");
-        UnhandledException+=(_,args)=>{Environment.ExitCode=1;options.WriteFailure("unhandled-native-ui",args.Exception,args.Message);};
+        UnhandledException+=(_,args)=>{Environment.ExitCode=1;AcceptanceDriver.WriteFailure(options,"unhandled-native-ui",args.Exception,window);};
         options.TraceStartup("initializing-original-App.xaml");InitializeComponent();
         options.TraceStartup("original-application-resources-ready");
     }
@@ -27,7 +27,7 @@ public sealed partial class WorkbenchApplication:Application
         }
         catch(Exception error)
         {
-            Environment.ExitCode=1;options.WriteFailure("native-plugin-acceptance",error);
+            Environment.ExitCode=1;AcceptanceDriver.WriteFailure(options,"native-plugin-acceptance",error,window);
             if(window is not null)await window.FinishSmokeAsync();else Exit();
         }
     }

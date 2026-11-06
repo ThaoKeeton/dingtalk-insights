@@ -17,14 +17,14 @@ using Workbench.WinUI.Sdk;
 
 namespace Workbench.App;
 
-internal static class AcceptanceDriver
+internal static partial class AcceptanceDriver
 {
     const string Id="com.projectworkbench.dingtalk-insights";
     const string Draft="Synthetic native acceptance draft: verify evidence before conclusions.";
     [DllImport("user32.dll",SetLastError=true)]static extern bool PostMessage(nint hwnd,uint message,nuint wParam,nint lParam);
     public static async Task Run(MainWindow window,RunOptions report,HarnessOptions options)
     {
-        var checks=new List<string>();var observations=new List<object>();
+        var checks=new List<string>();var observations=new List<object>();completedChecks=checks;CurrentStep="native-application-contract";
         void Record(string check)
         {checks.Add(check);report.WriteReport(new{succeeded=false,stage="running-"+options.Phase,checks,observations,report.StartupStages});}
         window.AssertUiThread();
@@ -40,6 +40,7 @@ internal static class AcceptanceDriver
         if(options.Phase=="initial")
         {
             Require(manager.Plugins.Count==0,"Fresh root discovered unexpected packages.");
+            CurrentStep="initial-plugin-install";
             Require((await manager.InstallAsync(options.Package)).Succeeded,"Actual PluginManager install failed.");
             Require(!(await manager.InstallAsync(options.Package)).Succeeded,"Duplicate actual install accepted.");
             await manager.DiscoverAsync();
@@ -114,6 +115,8 @@ internal static class AcceptanceDriver
             page=await Workspace(window);Invoke(Find<Button>(page,"DTI 打开模拟"));await Wait(()=>Resources(plugin).GetProperty("StoreOwned").GetBoolean(),"Re-enabled demo open failed.");
             await Start(window,page,plugin);
             Record("Re-enable creates fresh controller/default demo; explicit saved-config load and separate new monitor confirmation work");
+            await VerifyPendingStopControls(window,options,observations,Record);
+            await Workspace(window);
         }
         else if(options.Phase=="restart")
         {
@@ -142,6 +145,7 @@ internal static class AcceptanceDriver
             Record("After verified prior exit, driver-only offline package removal relaunches absent while encrypted data remain; SDK has no uninstall API");
         }
         Require(Fingerprint(options.Package)==packageHash,"Source package mutated during approval/load.");
+        CurrentStep="actual-window-close";
         var closingLoop=plugin is null?Task.CompletedTask:Loop(plugin);
         var closingObserved=false;
         window.AppWindow.Closing+=(_,_)=>closingObserved=true;
@@ -158,21 +162,23 @@ internal static class AcceptanceDriver
                 checks.Add("Actual WM_CLOSE/AppWindow.Closing and Window.Closed after full plugin retirement; launcher must still verify process exit0");
                 report.WriteReport(new{succeeded=true,stage="closed-awaiting-launcher-exit-validation",phase=options.Phase,evidenceKind="source-linked-unmodified-presenter-compatibility",businessBoundary="production-demo-Core-MonitorSupervisor; no real DWS/account/model/Webhook",options.RunId,packageSha256=packageHash,platformCommit="6565180b17130f6d494978291df4138de3fdb0b4",productBuild=JsonDocument.Parse(File.ReadAllText(Path.Combine(options.Package,"build-info.json"))).RootElement.Clone(),os=RuntimeInformation.OSDescription,osBuild=Environment.OSVersion.Version.ToString(),sessionId=Process.GetCurrentProcess().SessionId,processId=Environment.ProcessId,uiThreadId=Environment.CurrentManagedThreadId,checks,observations,report.StartupStages,completedUtc=DateTimeOffset.UtcNow});
             }
-            catch(Exception error){Environment.ExitCode=1;report.WriteFailure("actual-window-closed",error);}
+            catch(Exception error){Environment.ExitCode=1;WriteFailure(report,"actual-window-closed",error,window);}
         };
         if(!PostMessage(WinRT.Interop.WindowNative.GetWindowHandle(window),0x0010,0,0))throw new IOException("Could not post actual owned-window WM_CLOSE.");
     }
-    static object PluginTarget(PluginManager manager)=>((WinUiView)manager.Contributions.Views.Single(v=>v.PluginId==Id&&v.View.Id=="workspace").View).CreateView.Target??throw new InvalidOperationException("Factory has no plugin instance target.");
+    static object PluginTarget(PluginManager manager)=>((WinUiView)manager.Contributions.Views.Single(v=>v.PluginId==Id&&v.View.Id=="workspace").View).CreateView.Target??throw new OwnedAssertionException("Factory has no plugin instance target.");
     static JsonElement Observation(object plugin)=>JsonDocument.Parse((string)plugin.GetType().GetProperty("ObservationJson")!.GetValue(plugin)!).RootElement.Clone();
     static JsonElement Resources(object plugin)=>Observation(plugin).GetProperty("Resources");
     static Task Loop(object plugin)=>(Task)plugin.GetType().GetProperty("MonitoringCompletion")!.GetValue(plugin)!;
     static async Task<FrameworkElement> Workspace(MainWindow window)
     {
+        CurrentStep="workspace-native-controls";
         var page=await window.SmokeNavigateAsync("view",Id,"workspace");Require(AutomationProperties.GetName(page)=="DTI 原生工作区","Native workspace factory returned error/unexpected page.");
         Find<TextBox>(page,"DTI 整理事项");Find<Button>(page,"DTI 开始监控");return page;
     }
     static async Task<FrameworkElement> Settings(MainWindow window)
     {
+        CurrentStep="settings-native-controls";
         var page=await window.SmokeNavigateAsync("view",Id,"settings");Require(AutomationProperties.GetName(page)=="DTI 原生设置","Native settings factory returned error/unexpected page.");
         Find<TextBox>(page,"DTI 身份 corpId:userId");Find<Button>(page,"DTI 保存设置");return page;
     }
@@ -183,6 +189,7 @@ internal static class AcceptanceDriver
     }
     static async Task TrustThroughPresenter(MainWindow window,PluginManager manager,bool approve)
     {
+        CurrentStep=approve?"presenter-enable-confirm":"presenter-enable-cancel";
         var page=await window.SmokeNavigateAsync("plugins");Invoke(Find<Button>(page,"启用 钉钉沟通事项"));
         if(!manager.Plugins.Single().IsTrusted)await Dialog(window,approve,"信任并启用");
         await Wait(()=>!OpenDialogs(window).Any()&&window.SmokeNavigationAvailable,"Trust presenter did not settle.");
@@ -194,7 +201,7 @@ internal static class AcceptanceDriver
         await Wait(()=>manager.Plugins.Single().State==PluginState.Disabled&&manager.Contributions.Views.All(v=>v.PluginId!=Id),"Real presenter disable failed.");
     }
     static async Task ConfirmAction(MainWindow window,FrameworkElement page,string name,bool approve)
-    {Invoke(Find<Button>(page,name));await Dialog(window,approve,"确认本次操作");await Task.Delay(40);}
+    {CurrentStep=name switch{"DTI 开始监控"=>"native-monitor-start","DTI 读取一次"=>"native-read-once","DTI 搜索"=>"native-search","DTI 整理候选"=>"native-analysis",_=>"native-confirmed-action"};Invoke(Find<Button>(page,name));await Dialog(window,approve,"确认本次操作");await Task.Delay(40);}
     static async Task Dialog(MainWindow window,bool approve,string primary)
     {
         await Wait(()=>OpenDialogs(window).Any(),"Actual ContentDialog did not open.");var dialog=OpenDialogs(window).Single();
@@ -204,7 +211,7 @@ internal static class AcceptanceDriver
     }
     static IEnumerable<ContentDialog> OpenDialogs(MainWindow window)=>VisualTreeHelper.GetOpenPopupsForXamlRoot(((FrameworkElement)window.Content).XamlRoot)
         .SelectMany(p=>Descendants<ContentDialog>(p.Child));
-    static T Find<T>(DependencyObject root,string name)where T:DependencyObject=>Descendants<T>(root).SingleOrDefault(v=>AutomationProperties.GetName(v)==name)??throw new InvalidOperationException("Missing actual native control: "+name);
+    static T Find<T>(DependencyObject root,string name)where T:DependencyObject=>Descendants<T>(root).SingleOrDefault(v=>AutomationProperties.GetName(v)==name)??throw new OwnedAssertionException("Missing actual native control: "+name);
     static IEnumerable<T> Descendants<T>(DependencyObject root)where T:DependencyObject
     {
         if(root is T value)yield return value;
@@ -213,10 +220,10 @@ internal static class AcceptanceDriver
     static void Invoke(Button button)
     {
         Require(button.IsEnabled,"Native button disabled: "+AutomationProperties.GetName(button));
-        var peer=new ButtonAutomationPeer(button);var invoke=peer.GetPattern(PatternInterface.Invoke) as IInvokeProvider??throw new InvalidOperationException("Native button has no Invoke provider.");invoke.Invoke();
+        var peer=new ButtonAutomationPeer(button);var invoke=peer.GetPattern(PatternInterface.Invoke) as IInvokeProvider??throw new OwnedAssertionException("Native button has no Invoke provider.");invoke.Invoke();
     }
     static async Task Wait(Func<bool> predicate,string error)
-    {var watch=Stopwatch.StartNew();while(!predicate()){if(watch.Elapsed>TimeSpan.FromSeconds(15))throw new TimeoutException(error);await Task.Delay(25);}}
+    {var watch=Stopwatch.StartNew();while(!predicate()){if(watch.Elapsed>TimeSpan.FromSeconds(15))throw new OwnedAssertionException(error);await Task.Delay(25);}}
     static string Hash(string path)=>Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));
     static string Fingerprint(string root)
     {
@@ -225,5 +232,5 @@ internal static class AcceptanceDriver
         {HarnessOptions.RejectLinks(path);hash.AppendData(Encoding.UTF8.GetBytes(Path.GetRelativePath(root,path).Replace('\\','/')));hash.AppendData([0]);hash.AppendData(File.ReadAllBytes(path));hash.AppendData([0]);}
         return Convert.ToHexString(hash.GetHashAndReset());
     }
-    static void Require(bool value,string reason){if(!value)throw new InvalidOperationException(reason);}
+    static void Require(bool value,string reason){if(!value)throw new OwnedAssertionException(reason);}
 }
