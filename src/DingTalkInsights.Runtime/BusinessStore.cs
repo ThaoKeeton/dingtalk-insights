@@ -28,7 +28,7 @@ public sealed class BusinessStore: IStateStore,IDisposable
 }
 
 /// <summary>Bounded DPAPI/cipher document. Caller owns its enclosing business/workspace lifetime.</summary>
-internal sealed class EncryptedDocument<T>(string path,IDataCipher cipher,int maximumBytes=1024*1024)
+public sealed class EncryptedDocument<T>(string path,IDataCipher cipher,int maximumBytes=1024*1024)
 {
     public T? Read()
     {

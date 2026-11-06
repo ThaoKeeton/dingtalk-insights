@@ -19,7 +19,7 @@ public sealed class MonitoringPreview
 public sealed class AnalysisPreview
 {
     internal AnalysisPreview(PreviewAuthority authority,MessageBatch batch,string candidateFingerprint,string task,ModelSettings model)
-    {Authority=authority;Batch=batch;CandidateFingerprint=candidateFingerprint;Task=task;Model=model;}
+    {Authority=authority;Batch=batch with{Messages=Array.AsReadOnly(batch.Messages.ToArray()),Warnings=Array.AsReadOnly(batch.Warnings.ToArray())};CandidateFingerprint=candidateFingerprint;Task=task;Model=model;}
     internal PreviewAuthority Authority{get;}
     internal string CandidateFingerprint{get;}
     public MessageBatch Batch{get;}

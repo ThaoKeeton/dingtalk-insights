@@ -55,14 +55,21 @@ public sealed partial class InsightController
         Dispatch(expected,cancellation,()=>config.Source=="demo"?Task.FromResult(new ModelResult(Demo.Analyze(batch,task),0,0)):
             services.AnalyzeAsync(PrivateCredentials(CredentialUse.Model).OpenAiKey,batch,task,config.Model,cancellation));
     MessageBatch SliceDemo(QueryScope scope)=>demo with{Scope=scope,Messages=demo.Messages.Where(m=>m.CreatedAt>=scope.Start&&m.CreatedAt<scope.End).ToArray()};
-    public Task<bool> ReadOnceAsync(MonitoringRequest request,bool confirmed,CancellationToken cancellation=default)
+    public Task<bool> ReadOnceAsync(MonitoringRequest request,bool confirmed,CancellationToken cancellation=default)=>ReadOnceCore(request,null,confirmed,cancellation);
+    /// <summary>Native dialog path: consume the same immutable scope preview and keep its exact bounded end.</summary>
+    public Task<bool> ReadOnceAsync(MonitoringPreview preview,bool confirmed,CancellationToken cancellation=default)=>ReadOnceCore(confirmed?preview.Request:null!,preview,confirmed,cancellation);
+    Task<bool> ReadOnceCore(MonitoringRequest request,MonitoringPreview? preview,bool confirmed,CancellationToken cancellation)
     {
         if(!confirmed)return Task.FromResult(false);
         return Run(async operation=>
         {
-            RequireStore();var config=await BuildConfiguration(request with{UploadToModel=false},operation.Generation,operation.Token);
+            RequireStore();
+            if(preview is not null)Commit(operation,()=>{RequireStopped();Consume(preview.Authority,operation);});
+            var config=await BuildConfiguration(request with{UploadToModel=false},operation.Generation,operation.Token);
+            var through=preview?.NextRead.End??clock.UtcNow;
+            if(preview is not null&&MonitorEngine.NextScope(state,config.Scope(through),through)!=preview.NextRead)throw new RuntimeFault(RuntimeFailure.Configuration);
             MessageBatch? fetched=null;var engine=new MonitorEngine(state,OwnedStore(operation.Generation));
-            var result=await engine.TickAsync(config.Scope(clock.UtcNow),async(scope,token)=>fetched=await Fetch(config,scope,operation.Generation,token),null,config.Model,state.RetentionDays,clock.UtcNow,operation.Token);
+            var result=await engine.TickAsync(config.Scope(through),async(scope,token)=>fetched=await Fetch(config,scope,operation.Generation,token),null,config.Model,state.RetentionDays,through,operation.Token);
             Commit(operation,()=>{previews.Clear();candidates=Limit(fetched!);notice=result.Complete?"本次原文已采集到本机；完整性和来源仍需核对。":"本次采集不完整，断点未跨过未知范围。";});
             return true;
         },RuntimeFailure.Source,cancellation);

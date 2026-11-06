@@ -294,6 +294,31 @@ internal static class RuntimeTests
             await f.Controller.DisconnectAsync();using var legacy=new EncryptedStateStore(Path.Combine(f.CanonicalRoot,"state.dpapi"),f.Cipher,new FixedTime(Now));var saved=legacy.Load();
             Assert(saved.Requests==1&&saved.Attempted.Count==1&&saved.Reports.Count==0&&saved.InputTokens==0&&saved.OutputTokens==0,"failed result was later resurrected by Stop");
         }));
+        yield return ("native read preview fixes authorized window across confirmation delay",()=>Run(async()=>
+        {
+            using var f=new Fixture();await f.Controller.ConnectAsync(f.CanonicalRoot,true);
+            var request=f.Request with{Start=Now.AddMinutes(-10)};var preview=f.Controller.PreviewMonitoring(request);
+            QueryScope? dispatched=null;f.Services.Read=(scope,token)=>{dispatched=scope;return Task.FromResult(FakeServices.Batch(scope));};
+            f.Clock.Advance(TimeSpan.FromMinutes(1));
+            Assert(await f.Controller.ReadOnceAsync(preview,true));
+            Assert(dispatched==preview.NextRead,"read widened reviewed time window while dialog was open");
+            var stale=f.Controller.PreviewMonitoring(request);await f.Controller.StopMonitoringAsync();
+            await Fault(()=>f.Controller.ReadOnceAsync(stale,true),RuntimeFailure.Configuration);
+        }));
+        yield return ("analysis preview freezes warning request body against source array mutation",()=>Run(async()=>
+        {
+            using var f=new Fixture();var warnings=new[]{"Original synthetic warning"};
+            f.Services.Read=(scope,token)=>Task.FromResult(FakeServices.Batch(scope) with{Warnings=warnings});
+            Assert(await f.Controller.ConnectAsync(f.CanonicalRoot,true));Assert(await f.Controller.ReadOnceAsync(f.Request,true));
+            Assert(await f.Controller.UseCredentialsAsync(CredentialLocation.ConnectedStore,CredentialUse.Model,true));
+            var preview=(await f.Controller.PreviewAnalysisAsync(new()))!;
+            var body=OpenAiClient.BuildRequest(preview.Batch,preview.Task,preview.Model);warnings[0]="Changed after review";
+            Assert(OpenAiClient.BuildRequest(preview.Batch,preview.Task,preview.Model)==body,"approved request body changed after warning source mutation");
+            Assert(preview.Batch.Warnings is not string[],"preview leaked mutable warning array");
+            f.Services.Analyze=(batch,task,cancel)=>
+            {Assert(OpenAiClient.BuildRequest(batch,task,preview.Model)==body,"dispatch changed reviewed body");return Task.FromResult(new ModelResult(new AnalysisReport(batch,[],[],task),0,0));};
+            Assert(await f.Controller.AnalyzeCandidatesAsync(preview,true));
+        }));
         yield return ("runtime production services use synthetic DWS process through controller consent boundary",()=>Run(async()=>
         {
             using var f=new Fixture();using var dws=new SyntheticDws(messages:true);

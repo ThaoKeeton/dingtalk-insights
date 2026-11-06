@@ -1,0 +1,46 @@
+name: Workbench native plugin acceptance
+on:
+  push:
+    branches: [main, 'codex/workbench-plugin']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  plugin:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.427
+            10.0.403
+      - name: Portable production contracts
+        run: dotnet run --project tests/DingTalkInsights.Tests -c Release
+      - name: Build original pinned SDK, actual plugin package and separate genuine native host
+        shell: pwsh
+        run: ./scripts/build-workbench-plugin.ps1
+      - name: net8 to net10 persisted-state and native DPAPI interoperability
+        shell: pwsh
+        run: ./scripts/test-workbench-interop.ps1
+      - name: Actual install trust navigation settings demo monitor disable exit restart offline removal and extracted ZIP
+        shell: pwsh
+        run: ./scripts/test-workbench-plugin-native.ps1 -BuildDirectory artifacts/workbench-plugin -TimeoutSeconds 180
+      - name: Preserve complete native host, clean plugin ZIP, generated XAML and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DingTalkInsights-Workbench-native-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            artifacts/workbench-plugin/host/
+            artifacts/workbench-plugin/host-build/obj/**/*.g.cs
+            artifacts/workbench-plugin/host-build/obj/**/*.g.i.cs
+            artifacts/workbench-plugin/package/
+            artifacts/workbench-plugin/*.zip
+            artifacts/workbench-plugin/*.json
+            artifacts/workbench-plugin/evidence/
+            artifacts/workbench-plugin/interop-evidence/

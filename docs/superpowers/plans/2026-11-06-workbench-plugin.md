@@ -49,16 +49,25 @@
 - [x] Document exact SDK gaps and rollback/native gates; self-review once and fix material findings with regression coverage.
 - [x] Run full Release suite and git diff --check; commit locally. Write `/tmp/dingtalk-workbench-task1-report.md` with tests/interfaces/decisions/remaining native checks and pause for parent review.
 
-### Task 2: Native adapter, pages and installable package (not executed here)
+### Task 2: Native adapter, pages and installable package (native-CI-ready)
 
 **Files:** new native plugin project, manifest, staging/smoke scripts, native acceptance workflow.
 **Consumes:** reviewed Task 1 interfaces above, pinned Workbench SDK/WinUI SDK.
 **Produces:** actual installable DLL plugin, native pages/settings and simulated host install/enable/navigation/monitor/disable/exit/remove/relaunch evidence.
 
-- [ ] Parent reviews Task 1 commit/interfaces before dispatching a fresh implementer.
-- [ ] Adapter forwards DataDirectory/Lifetime and owns one controller; factories create standard WinUI controls and disposable subscriptions only.
-- [ ] Stage private dependencies, reject shared assemblies, run actual Windows host lifecycle and extracted package smoke. Distinguish restart-required removal from driver file deletion; no private business smoke API is presumed.
+- [x] Parent reviews Task 1 commit/interfaces before dispatching a fresh implementer.
+- [x] Adapter forwards DataDirectory/Lifetime and owns one controller; factories create standard WinUI controls and disposable subscriptions only.
+- [x] Implement private-dependency staging, shared-identity guards and actual Windows host/extracted ZIP phase drivers.
+- [ ] Execute actual Windows native publish/lifecycle and extracted ZIP phases in parent CI. Distinguish restart-required removal from driver file deletion; no private business smoke API is presumed.
 
 ## Task 1 verification ledger
 
 183/183 Release synthetic tests passed (152 existing, 31 new). Evidence: `/tmp/dingtalk-task1-final-release.log`; `git diff --check` clean. RED->GREEN covered missing runtime/delivery interfaces, first plugin-local credential save into a missing data directory, idle expiry under UTC rollback, immutable Start/analysis/send previews and the undurable-final-report rollback. Pending/ignored model/send/configuration work retains the lease until retirement. `StateStore.cs` is unchanged from e85dbd5, and its actual legacy JSON load/save drops an injected unknown field while the encrypted send sidecar survives. Parent independently reviews this task before native work; no reviewer dispatched by this implementer.
+
+## Task 2 implementation ledger
+
+Ruling: retain implemented/verified 6565180b API1; later 0.2 contracts are not a basis for unverified capabilities. Ruling: use exact source-linked presenter bootstrap for isolated acceptance and production demo Core/MonitorSupervisor transport path; no real account/key/network work. The shipping EXE, SDK uninstall, Windows11 manual and enterprise-service/multiday acceptance remain distinct.
+
+Files: `src/DingTalkInsights.Workbench`, exact 24-blob `eng/vendor/workbench-6565180b`, `tests/DingTalkInsights.Workbench.AcceptanceHost`, PackageTool, net8/net10 InteropFixture, portable adapter tests, build/interop/native launcher scripts and dedicated Windows2025 workflow. Details and current evidence boundaries: `docs/workbench-plugin.md`, `/tmp/dingtalk-workbench-task2-report.md`.
+
+Targeted RED->GREEN: warning-array/request-body freeze; missing adapter contracts; pending adapter persistence returning after Stop; nested inventory payload omission; exact native one-shot read scope across dialog delay. New read overload consumes the real MonitoringPreview and fixes the bounded end instead of recomputing it after the dialog. Core/standalone targets remain unchanged.

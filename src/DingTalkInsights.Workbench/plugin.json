@@ -1,0 +1,11 @@
+{
+  "id": "com.projectworkbench.dingtalk-insights",
+  "name": "钉钉沟通事项",
+  "version": "0.3.0",
+  "apiVersion": 1,
+  "minimumHostVersion": "0.1.0",
+  "entryAssembly": "DingTalkInsights.Workbench.dll",
+  "entryType": "DingTalkInsights.Workbench.InsightPlugin",
+  "description": "原生监控、搜索、待核实事项、历史与设置。默认模拟；连接、采集、模型及人工发送分别确认。SDK1 停用和退出均撤销恢复，重新启用后须明确开始。",
+  "capabilities": ["native-views", "settings", "local-files", "explicit-dws-polling", "explicit-model-upload", "manual-webhook"]
+}

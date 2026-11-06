@@ -2,7 +2,7 @@
 
 ## Current verified source contract
 
-Read-only source pin: `6565180b17130f6d494978291df4138de3fdb0b4`, `feat/native-plugin-workbench`. Source provenance is held by the parent in `/tmp/dingtalk-workbench-sdk-source.json`. This Task 1 is coded against the capabilities actually present in that snapshot, not later design documents.
+Read-only source pin: `6565180b17130f6d494978291df4138de3fdb0b4`, `feat/native-plugin-workbench`. Source provenance is held by the parent in `/tmp/dingtalk-workbench-sdk-source.json`. The Runtime and adapter are coded against the capabilities actually present in that snapshot, not later design documents.
 
 - API 1: `IWorkbenchPlugin.InitializeAsync(IPluginContext, CancellationToken)` and `StopAsync(CancellationToken)`.
 - Context: `PluginId`, `DataDirectory`, `Lifetime`, JSON `Settings`; registration of views, commands and string setting metadata during Initialize only.
@@ -40,3 +40,9 @@ The parent supplied `de5a316`'s design-only documents (`/tmp/dingtalk-plugin-con
 ## Remaining Windows evidence
 
 Task 1 Linux tests do not prove WinUI creation, DPAPI Windows interoperability, packaging or actual host lifecycle. Parent/Task 2 must build/test .NET 8 standalone changes, real DPAPI with synthetic values, native adapter .NET 10/WinUI 1.8, shared-assembly exclusion/private-dependency staging, ZIP install/trust/enable/recreated-navigation/settings/demo collection/search/analysis/manual-send-preview/disable/exit/relaunch/remove. Use isolated roots/fake services only; record actual host capabilities and process outcomes. Windows Server CI does not substitute for Windows 11 human acceptance.
+
+## Task 2 delivered adapter and acceptance
+
+The real API1 plugin, native code-created workspace/settings and immutable-preview dialogs are implemented. `CanonicalStoreLocation` defers standard known-folder resolution until Connect review and verifies the exact standard path before Runtime takes the old-compatible lease. The native one-shot read overload consumes a MonitoringPreview and fixes its exact NextRead end across dialog delay. JSON host preferences contain only model/limits; sensitive connection/task drafts use Runtime's bounded encrypted-document helper. Product resource observations count actual dispatcher subscriptions, operations, source/model/send dispatch and owned-store writes; MonitoringCompletion is the real supervisor loop.
+
+The source-linked host/launcher/workflow and packaging rules are documented in `docs/workbench-plugin.md`. Native driver implementation is not executed Windows evidence. The adapter remains pinned to verified 6565180b while later implemented platform runtime-service changes await their own green Windows CI/review; no unsupported API use or auto-recovery authority is introduced.

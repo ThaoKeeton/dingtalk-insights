@@ -21,7 +21,7 @@ public sealed partial class InsightController
     void Commit(Operation operation,Action action)
     {lock(sync){EnsureCurrent(operation.Generation,operation.Token);action();}}
     Task<T> Dispatch<T>(long expected,CancellationToken cancellation,Func<Task<T>> action)
-    {lock(sync){EnsureCurrent(expected,cancellation);return action();}}
+    {lock(sync){EnsureCurrent(expected,cancellation);dispatches++;return action();}}
     async Task<bool> Run(Func<Operation,Task<bool>> action,RuntimeFailure fallback,CancellationToken cancellation)
     {
         Operation operation;
@@ -149,7 +149,7 @@ public sealed partial class InsightController
     sealed class OperationStore(InsightController owner,BusinessStore store,long expected):IStateStore
     {
         public InsightState Load(){lock(owner.sync){Check();return store.Load();}}
-        public void Save(InsightState value){lock(owner.sync){Check();store.Save(value);}}
+        public void Save(InsightState value){lock(owner.sync){Check();store.Save(value);owner.ownedStoreWrites++;}}
         void Check()
         {
             if(!ReferenceEquals(owner.store,store)||(!owner.retirementWrite.Value&&(owner.generation!=expected||owner.stopCount>0||owner.deactivated||owner.lifetime.IsCancellationRequested)))

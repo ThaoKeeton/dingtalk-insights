@@ -18,7 +18,7 @@ public sealed partial class InsightController:IAsyncDisposable
     readonly HashSet<Subscription> subscriptions=[];
     readonly AsyncLocal<bool> retirementWrite=new();
     readonly MessageBatch demo;
-    long generation;
+    long generation,dispatches,ownedStoreWrites;
     int stopCount;
     bool deactivated;
     Task deactivation=Task.CompletedTask;
@@ -47,6 +47,11 @@ public sealed partial class InsightController:IAsyncDisposable
         this.cipher=cipher;this.services=services??new RuntimeServices();this.clock=clock??new SystemMonitorClock();time=new ClockTime(this.clock);this.lifetime=lifetime;
         demo=Demo.CreateBatch(this.clock.UtcNow);
         lifetimeRegistration=lifetime.Register(static value=>((InsightController)value!).OnLifetimeCancelled(),this);
+    }
+    public RuntimeObservation Observation
+    {
+        get{lock(sync)return new(generation,pending.Count,subscriptions.Count,store is not null,supervisor is not null,
+            supervisor?.Completion.IsCompleted??true,dispatches,ownedStoreWrites);}
     }
     public Task InitializeAsync(){EnsureActive();return Task.CompletedTask;}
     public Task Deactivation{get{lock(sync)return deactivation;}}

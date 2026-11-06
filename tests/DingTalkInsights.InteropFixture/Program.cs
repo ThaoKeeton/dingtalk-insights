@@ -1,0 +1,49 @@
+using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
+using DingTalkInsights.Core;
+using DingTalkInsights.Runtime;
+
+var root=Path.GetFullPath(args[1]);var id=Path.GetFileName(root);
+var expected=Path.GetFullPath(Path.Combine(Path.GetTempPath(),"DingTalkInsights-Interop",id));
+if(!Guid.TryParseExact(id,"N",out _)||root!=expected||!File.Exists(Path.Combine(root,".fixture-owner")))throw new IOException("Only guarded synthetic fixture roots are allowed.");
+for(var part=root;part is not null;part=Path.GetDirectoryName(part))if((File.GetAttributes(part)&FileAttributes.ReparsePoint)!=0)throw new IOException("Fixture links forbidden.");
+IDataCipher cipher=args[2]=="dpapi"?new DpapiCipher():new SyntheticCipher();
+var now=DateTimeOffset.Parse("2035-02-03T10:00:00Z");
+var clock=new FixedClock(now);var scope=new QueryScope("fixture:person","synthetic-interop-room",now.AddHours(-2),now.AddHours(-1));
+var message=new SourceMessage("fixture-1",scope.ConversationId,"fixture-person","Synthetic sender","Synthetic compatibility evidence",scope.Start.AddMinutes(2));
+var batch=new MessageBatch(scope,[message],true,["Synthetic warning"],new Dictionary<string,JsonElement>());
+var model=new ModelSettings();const string task="Synthetic interoperability task";
+var expectedFacts=new{scopeHash=scope.Fingerprint,revision=message.Revision,batchHash=batch.Fingerprint,attempt=InsightState.AttemptKey(scope,message),requestHash=OpenAiClient.Fingerprint(batch,task,model),day="2035-02-03",requests=1,reserved=0.01m};
+using var store=new BusinessStore(Path.Combine(root,args[2]),cipher,clock);
+if(args[0]=="write")
+{
+    var state=store.Load();state.Ingest(batch);state.MarkAttempted(scope,batch.Messages);state.Reserve(model,0.01m,now);store.Save(state);
+    var destination=Guard.Hash("synthetic-destination");var payload=Guard.Hash("synthetic-payload");var ledger=new SendLedger();
+    ledger.Attempts[Guard.Hash(destination+"\n"+payload)]=new(destination,payload,now,SendAttemptStatus.Pending,1);store.SendAttempts.Save(ledger);
+    File.WriteAllText(Path.Combine(root,args[2]+"-facts.json"),JsonSerializer.Serialize(expectedFacts));
+}
+else if(args[0]=="read")
+{
+    if(File.ReadAllText(Path.Combine(root,args[2]+"-facts.json"))!=JsonSerializer.Serialize(expectedFacts))throw new Exception("Persisted source/request/attempt hashes changed across runtimes.");
+    var state=store.Load();
+    if(state.Requests!=1||state.ReservedUsd!=0.01m||state.BudgetDay!="2035-02-03"||state.Messages.Count!=1||!state.Attempted.Contains(InsightState.AttemptKey(scope,message)))throw new Exception("Persisted attempts/budget changed.");
+    var calls=0;
+    if(state.Coverage.Count!=1)throw new Exception("Persisted complete checkpoint changed.");
+    // Force an overlap replay after validating the persisted checkpoint, to exercise attempted-revision suppression independently.
+    state.Coverage.Clear();
+    var result=await new MonitorEngine(state,store).TickAsync(scope,(s,ct)=>Task.FromResult(batch with{Scope=s}),
+        (b,t,ct)=>{calls++;throw new Exception("Duplicate paid dispatch");},model,state.RetentionDays,scope.End);
+    if(calls!=0||state.Requests!=1||state.ReservedUsd!=0.01m)throw new Exception("Runtime change replayed attempted source.");
+    if(store.SendAttempts.Load().Attempts.Single().Value.Status!=SendAttemptStatus.Pending)throw new Exception("Uncertain durable send attempt changed.");
+    Console.WriteLine($"PASS {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription} {args[2]}: persisted hashes/attempts/UTC budget and no duplicate analysis");
+}
+else throw new ArgumentException("Unknown fixture command.");
+return 0;
+sealed class FixedClock(DateTimeOffset now):TimeProvider{public override DateTimeOffset GetUtcNow()=>now;}
+sealed class SyntheticCipher:IDataCipher
+{
+    static readonly byte[] Prefix=Encoding.UTF8.GetBytes("DTI-synthetic-interop-only:");
+    public byte[] Protect(byte[] value)=>Prefix.Concat(value).ToArray();
+    public byte[] Unprotect(byte[] value)=>value.AsSpan().StartsWith(Prefix)?value[Prefix.Length..]:throw new CryptographicException();
+}

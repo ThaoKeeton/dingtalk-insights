@@ -1,0 +1,41 @@
+# Workbench native plugin 0.3.0
+
+The installable DLL plugin ID is `com.projectworkbench.dingtalk-insights`, entry `DingTalkInsights.Workbench.InsightPlugin`. It targets .NET 10 / Windows 10 SDK 19041 / x64 with WindowsAppSDK **1.8.260921001**, API **1**, minimum host **0.1.0**. The separate maintained standalone remains v0.2 / .NET 8 / its existing AppSDK version.
+
+`eng/vendor/workbench-6565180b/provenance.json` records the 24 exact SDK/Core/presenter input blobs from `ThaoKeeton/project-workbench` commit `6565180b17130f6d494978291df4138de3fdb0b4`. Original SDK/Core projects, their nearest Directory.Build.props and global.json remain byte-for-byte unchanged. This branch does not assume later optional background-task/secret/StopReason APIs. Later implemented platform changes need a verified green source pin and compatible review before adoption.
+
+## Use
+
+Install the **package directory containing plugin.json**, review its inventory/build-info and explicitly trust it in Workbench. Installation/trust/navigation do not open the business store, inspect DWS, resolve the old application's known folder, read keys or dispatch network work. The native workspace initially uses demo mode. Open the demo store explicitly, then review each fixed read/analysis/monitor preview. Results and source evidence remain tentative; a fix submission or reply never invents resolution or a personnel score.
+
+Native settings include identity, single conversation, timezone-bearing start/end, DWS executable, discovery, polling/retention, model/input and output rates, output cap, daily UTC dollar/request limits and task draft. Save/load are explicit actions. Host JSON contains only non-sensitive model/limit preferences; connection and task drafts use the Runtime bounded atomic encrypted document with Windows DPAPI. PasswordBoxes always start empty and never load existing secrets.
+
+A real connection first reviews resolving the standard standalone location, then shows and confirms the exact canonical path. Arbitrary copied directories cannot exclude a still-running standard old app. The connection holds the same physical `state.dpapi.lock` lease and preserves the canonical budget, attempts, content and send sidecar. It does not copy live stores, force locks, inherit retention/source/recovery authority or read credentials. Stop/disconnect/disable wait for actual operations and the production MonitorSupervisor to retire. Disconnect/disable releases the lease. Then the old standalone can explicitly start against that same store. Released old v0.2 manual sends cannot consult the canonical send sidecar: use a no-send rollback policy.
+
+Credential persistence and credential-purpose use are separate confirmations. Existing plugin or connected-store ciphertext is approved only for explicitly selected Model/Webhook purposes. Monitoring never auto-sends. Manual send displays the fixed body, target name, masked target fingerprint and previous attempt; any retry has a second explicit duplicate-risk dialog. Pending/unknown delivery is never automatically retried or described as exactly-once.
+
+One controller and one session belong to each plugin instance. Page factories create only native controls. Each loaded page owns one dispatcher-bound disposable subscription; superseded or unloaded callbacks are dropped. Work runs outside the UI thread. API1 Stop has no reason, so all stops are terminal and await persistence, operations, monitor tasks, subscriptions and leases. Enabled preference/configuration/checkpoints can survive host restart; business and credential authority do not. A new Start confirmation is required.
+
+## Build and native acceptance
+
+On Windows x64 with SDK **10.0.403**, from the repository root:
+
+```powershell
+./scripts/build-workbench-plugin.ps1
+./scripts/test-workbench-interop.ps1
+./scripts/test-workbench-plugin-native.ps1 -BuildDirectory artifacts/workbench-plugin -TimeoutSeconds 180
+```
+
+The builder verifies source blobs before and after, builds original SDK/Core projects with generated outputs outside the vendor export, publishes the complete independent acceptance host, and stages actual private dependencies. The package excludes Desktop/host/product EXEs, external PRI/XAML, Workbench SDK/Core/App, WinUI/WinRT/Windows projections and .NET framework/runtime payloads. Shared identities come from the actual Core framework reference catalog and the host's shared WinUI/projection dependency metadata/native deps graph; private Microsoft/System-prefixed names are not indiscriminately removed. The ZIP root contains plugin.json. SHA256 inventory/build-info and separate host ZIP accompany it.
+
+The product-owned host links unmodified original MainWindow, ShellPages, Ui, HostRuntime, RunOptions, NativeSmoke helpers, App.xaml and manifest. Only WorkbenchApplication bootstrap and the acceptance driver are substituted. It constructs `RunOptions(false, guardedTemporaryUserRoot, report)` and never calls the ordinary Parse or stock sample smoke, reads real LocalAppData or impersonates a sample. It uses the original presenter navigation and actual PluginManager install/discover/enable/disable.
+
+Executable Windows phases cover clean install/duplicate refusal, trust denial and real cancel/confirm dialogs, loaded native controls by automation name, native fixture edit/save and navigation/re-enable/restart roundtrip, real Core demo read/search/analysis/history, real MonitorSupervisor task across page recreation, single collector, stopped dispatch/write barrier, active disable/lease retirement, fresh explicit Start, real WM_CLOSE/AppWindow close, actual process exit, safe enabled restore, changed-package trust rejection, offline owned-package removal and absent relaunch retaining encrypted data. All phases repeat from re-extracted package and complete host ZIPs. Monitoring here uses the **production demo transport path and production controller/Core/scheduler**, not a fake supervisor, UIA capture or a real enterprise account. Runtime fake-transport/process tests cover other transport/budget/send edges.
+
+The launcher creates a GUID/marker guarded temporary root, rejects reparse points/arbitrary roots, uses structured arguments and an OS environment allowlist, waits for real exit with a finite timeout and only terminates its owned test process tree on timeout. Native success JSON is provisional: timeout/nonzero exit/missing report/late crash makes final success false. Encrypted fixture files are not uploaded. The workflow retains the complete host, nonempty main PRI, generated XAML sources, plugin, provenance and final reports.
+
+## Evidence boundary
+
+Linux verifies portable contracts, original source hashes, C# reference compilation and synthetic net8 -> net10 -> net8 persisted hashes/attempts/budgets. It cannot execute native PRI/XAML/WinUI or Windows DPAPI. Windows publication and actual-native phase results must be read from the exact-commit workflow; implementation of these phases is not a passing runtime result.
+
+This is **source-linked presenter compatibility**, not a run of the unchanged shipping Workbench EXE. API1 has no uninstall/update transaction or collectible assembly unload. Offline deletion occurs only after verified process exit, does not mean SDK uninstall or trust revocation, and retains user data/state preferences. Folder-picker interaction and Windows11 24H2 keyboard/theme/DPI/visual/screen-reader checks remain manual; use [the manual record](workbench-native-manual.md). Server2025 automation is not Windows11 manual, real enterprise integration or multi-day acceptance.

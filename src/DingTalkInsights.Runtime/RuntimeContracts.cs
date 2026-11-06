@@ -66,3 +66,6 @@ public interface IRuntimeServices
     Task<ModelResult> AnalyzeAsync(string key,MessageBatch batch,string task,ModelSettings model,CancellationToken cancellation);
     Task<DeliveryStatus> SendAsync(WebhookTarget target,string text,CancellationToken cancellation);
 }
+
+/// <summary>Non-sensitive observations of actual owned resources and operations; reading never performs IO.</summary>
+public sealed record RuntimeObservation(long Generation,int PendingOperations,int Subscriptions,bool StoreOwned,bool SupervisorPresent,bool MonitoringCompleted,long Dispatches,long OwnedStoreWrites);

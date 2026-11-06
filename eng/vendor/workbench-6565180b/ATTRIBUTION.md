@@ -1,0 +1,3 @@
+# Pinned Project Workbench source
+
+Byte-for-byte required SDK/Core/presenter graph from ThaoKeeton/project-workbench, commit 6565180b17130f6d494978291df4138de3fdb0b4 (API1), provided for authorized same-owner product compatibility builds. No license grant is invented here. Original file paths and Git blob/SHA256 values are in provenance.json. Original Directory.Build.props/global.json are retained. Source files are immutable build inputs; generated outputs must go to ArtifactsPath outside this directory. This is a source-linked presenter test host, not the unchanged shipping Workbench executable.

@@ -62,10 +62,10 @@ GitHub Actions 的 [Windows native MVP](.github/workflows/windows.yml) 运行核
 
 后台策略、实现决策与测试清单见 [v0.2 背景监控设计](docs/background-monitoring.md)。
 
-## Workbench 原生插件适配（开发中）
+## Workbench 原生插件 v0.3.0（等待原生 CI 验收）
 
 本分支已提取 .NET 8 `DingTalkInsights.Runtime`，与独立应用共用 Core、DPAPI 格式和规范账本独占锁；初始化/导航不连接真实服务。真实数据仅在明确连接标准独立应用数据目录后使用同一个物理账本，保留费用预留、来源和未知尝试；凭据用途另行确认，不继承恢复授权。停用/退出一律取消并等实际工作退役，重新启用需要明确开始。
 
 回到独立版前先断开/停用插件、等锁释放，再对同一目录核对设置并明确开始。发送尝试侧车能跨旧 v0.2 状态重写保留，但已发布旧二进制自己的手动发送不会查询它；旧版回退期间不要手动发送。维护中的独立版已接入该账本。任意副本目录不能证明与标准旧独立版互斥。
 
-Task 1 是可复用运行时，尚无可安装插件 DLL 或原生宿主验收。后续 Task 2 在独立评审后实现宿主 SDK 适配、页面和包；见 [设计](docs/superpowers/specs/2026-11-06-workbench-plugin-design.md)、[计划](docs/superpowers/plans/2026-11-06-workbench-plugin.md) 与 [当前 SDK 缺口和接线约束](docs/workbench-sdk-requirements.md)。
+本分支已实现真实 API1 DLL、代码创建的原生工作区/设置、可审计包和隔离的原始 presenter 源码宿主验收流程。Linux 已验证可移植运行时与引用编译；Windows 发布、WinUI/DPAPI 和全部原生阶段仍须按精确提交 CI 结果判定。构建、使用和证据边界见 [插件说明](docs/workbench-plugin.md)；另见 [设计](docs/superpowers/specs/2026-11-06-workbench-plugin-design.md)、[计划](docs/superpowers/plans/2026-11-06-workbench-plugin.md) 与 [当前 SDK 缺口和接线约束](docs/workbench-sdk-requirements.md)。

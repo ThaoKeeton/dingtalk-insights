@@ -8,3 +8,5 @@ This application uses .NET 8 and Microsoft Windows App SDK / WinUI 3 through the
 - [DingTalk Workspace CLI](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli), Apache-2.0; independently installed by the user and not bundled. The app invokes its published command contract; no DWS implementation source is copied.
 
 The native navigation and settings experience references the user's UPCAM application. No UPCAM or PowerToys source was copied into this repository. This notice does not license this repository's own source.
+
+The Workbench plugin compatibility export contains exact same-owner Project Workbench SDK/Core/presenter source at commit 6565180b17130f6d494978291df4138de3fdb0b4. Provenance/attribution and original paths are retained in eng/vendor/workbench-6565180b; no additional license grant is asserted. The plugin aligns with the host WindowsAppSDK1.8.260921001 dependency; the standalone dependency pin remains unchanged.
