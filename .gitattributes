@@ -1,0 +1,2 @@
+# Pinned third-party source is verified byte-for-byte; never normalize its checkout.
+/eng/vendor/workbench-6565180b/** -text

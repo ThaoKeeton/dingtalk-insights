@@ -2,7 +2,7 @@
 
 The installable DLL plugin ID is `com.projectworkbench.dingtalk-insights`, entry `DingTalkInsights.Workbench.InsightPlugin`. It targets .NET 10 / Windows 10 SDK 19041 / x64 with WindowsAppSDK **1.8.260921001**, API **1**, minimum host **0.1.0**. The separate maintained standalone remains v0.2 / .NET 8 / its existing AppSDK version.
 
-`eng/vendor/workbench-6565180b/provenance.json` records the 24 exact SDK/Core/presenter input blobs from `ThaoKeeton/project-workbench` commit `6565180b17130f6d494978291df4138de3fdb0b4`. Original SDK/Core projects, their nearest Directory.Build.props and global.json remain byte-for-byte unchanged. This branch does not assume later optional background-task/secret/StopReason APIs. Later implemented platform changes need a verified green source pin and compatible review before adoption.
+`eng/vendor/workbench-6565180b/provenance.json` records the 24 exact SDK/Core/presenter input blobs from `ThaoKeeton/project-workbench` commit `6565180b17130f6d494978291df4138de3fdb0b4`. Original SDK/Core projects, their nearest Directory.Build.props and global.json remain byte-for-byte unchanged. The root .gitattributes disables Git text conversion only for this exact vendor directory, preserving original blob bytes even when Windows uses core.autocrlf=true. The CI checkout regression uses actual Git filters and checks all 24 blob/SHA256 values; the production verifier still rejects any byte change. This branch does not assume later optional background-task/secret/StopReason APIs. Later implemented platform changes need a verified green source pin and compatible review before adoption.
 
 ## Use
 

@@ -18,6 +18,8 @@ jobs:
           dotnet-version: |
             8.0.427
             10.0.403
+      - name: Verify pinned bytes under real Git checkout filters
+        run: python scripts/check_workbench_source_checkout.py --report artifacts/workbench-checkout/result.json
       - name: Portable production contracts
         run: dotnet run --project tests/DingTalkInsights.Tests -c Release
       - name: Build original pinned SDK, actual plugin package and separate genuine native host
@@ -36,6 +38,7 @@ jobs:
           name: DingTalkInsights-Workbench-native-${{ github.sha }}
           if-no-files-found: error
           path: |
+            artifacts/workbench-checkout/result.json
             artifacts/workbench-plugin/host/
             artifacts/workbench-plugin/host-build/obj/**/*.g.cs
             artifacts/workbench-plugin/host-build/obj/**/*.g.i.cs
