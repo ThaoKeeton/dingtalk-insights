@@ -184,7 +184,8 @@ internal sealed class InsightPage:UserControl
     }
     async Task Resolve(bool resolved)
     {
-        var preview=await Work(()=>controller.PreviewResolutionAsync((int)issue.Value-1,resolved));if(preview is null)return;
+        var index=(int)issue.Value-1;
+        var preview=await Work(()=>controller.PreviewResolutionAsync(index,resolved));if(preview is null)return;
         var evidence=string.Join("\n\n",preview.Evidence.Select(e=>$"{e.Message.MessageId} / {e.Message.CreatedAt:O}\n{e.Quote}"));
         var instruction=resolved?"确认你已回原会话核对证据及解决结果；修复提交或有人回复不等于解决。":"撤销此报告该项人工确认，恢复原报告的待核实状态。本次不调用模型或修改其他报告。";
         if(await Confirm(resolved?"复核原文证据":"撤销人工确认",$"问题 {preview.Index+1}：{preview.Title}\n{instruction}\n{evidence}"))
