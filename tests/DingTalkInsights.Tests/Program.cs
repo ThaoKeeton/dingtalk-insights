@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using DingTalkInsights.Core;
 
 if(SyntheticDws.TryRun(args) is {} syntheticExit)return syntheticExit;
+if(ReportAtomicCommitTests.TryRunChild(args) is {} atomicExit)return atomicExit;
 
 var tests = new List<(string Name, Action Test)>();
 var scope = new QueryScope("corp:user", "cid-demo", DateTimeOffset.Parse("2026-11-06T09:00:00+08:00"), DateTimeOffset.Parse("2026-11-06T11:00:00+08:00"));
@@ -51,6 +52,7 @@ Add("补充完整性字段未知类型或真值均不完整",()=>{foreach(var fi
 
 tests.AddRange(DeliveryTests.All());
 tests.AddRange(ReportReviewTests.All());
+tests.AddRange(ReportAtomicCommitTests.All());
 tests.AddRange(ReviewControllerTests.All());
 tests.AddRange(TaskAwareAnalysisTests.All());
 tests.AddRange(RuntimeTests.All());

@@ -65,6 +65,7 @@ public sealed class MonitorEngine(InsightState state,IStateStore store)
         cancellation.ThrowIfCancellationRequested();
         // The caller's async before-model preparation may have crossed a retention boundary.
         state.Trim(utcNow?.Invoke()??now,state.RetentionDays);state.EnsureRetained(batch);
+        if(store is IReportCommitStore prepared)prepared.PrepareReport(state);
         AnalysisAttemptPolicy.RequireExact(state,batch,task,reuseConfirmed);
         var request=OpenAiClient.BuildRequest(batch,task,model);
         // Fetch, readiness and semaphore waits may cross UTC midnight. Reserve on the dispatch boundary.
@@ -82,18 +83,20 @@ public sealed class MonitorEngine(InsightState state,IStateStore store)
         catch(MonitoringFault e)when(e.Category is MonitorFailure.Configuration or MonitorFailure.Storage or MonitorFailure.Retention){throw;}
         catch(Exception e){throw new ModelAttemptFailure(e is MonitoringFault{Category:MonitorFailure.ModelAuthorization}?MonitorFailure.ModelAuthorization:MonitorFailure.ModelUnknown);}
         var previousReports=state.Reports;var previousInput=state.InputTokens;var previousOutput=state.OutputTokens;
-        var saved=new SavedReport(now,batch.Scope.Key,task,ReportRenderer.Markdown(result.Report),batch.IsDemo,batch.Messages.Min(m=>m.CreatedAt));
-        try{while(previousReports.Contains(saved))saved=saved with{CreatedAt=saved.CreatedAt.AddTicks(1)};}
+        var saved=new SavedReport(now,batch.Scope.Key,task,ReportRenderer.Markdown(result.Report),batch.IsDemo,batch.Messages.Min(m=>m.CreatedAt))
+            {CommitId=store is IReportCommitStore?Guid.NewGuid().ToString("N"):null};
+        try{while(previousReports.Any(r=>ReportReviewSnapshot.Key(r)==ReportReviewSnapshot.Key(saved)))saved=saved with{CreatedAt=saved.CreatedAt.AddTicks(1)};}
         catch(ArgumentOutOfRangeException){throw new MonitoringFault(MonitorFailure.Storage);}
         state.InputTokens+=result.InputTokens;state.OutputTokens+=result.OutputTokens;
         state.Reports=previousReports.Append(saved).TakeLast(100).ToList();
-        try{Save();}
+        try{if(store is IReportCommitStore committer)committer.CommitReport(state,saved,result.Report);else Save();}
         catch
         {
             // A failed final commit must not surface an undurable history entry or resurrect it on Stop.
             // The pre-HTTP attempt and budget reservation deliberately remain committed.
             state.Reports=previousReports;state.InputTokens=previousInput;state.OutputTokens=previousOutput;throw;
         }
+        if(!state.Reports.Contains(saved))throw new MonitoringFault(store is IReportCommitStore{CommitUnavailable:true}?MonitorFailure.Storage:MonitorFailure.Retention);
         return result;
     }
     void Save(){try{store.Save(state);}catch(Exception){throw new MonitoringFault(MonitorFailure.Storage);}}

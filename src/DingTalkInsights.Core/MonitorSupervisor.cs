@@ -103,7 +103,7 @@ public sealed class MonitorSupervisor(MonitorEngine engine,IStateStore store,
             lock(cancellationSync){session?.Dispose();session=null;}
             if(revokeRecovery)BackgroundPolicy.Revoke(engine.State);
             else if(engine.State.Supervisor.Status!=MonitorStatus.NeedsAttention)engine.State.Supervisor=engine.State.Supervisor with{Status=MonitorStatus.Stopped};
-            if(!Save())throw new MonitoringFault(MonitorFailure.Storage);
+            if(!Save(revokeRecovery))throw new MonitoringFault(MonitorFailure.Storage);
             Changed?.Invoke(null);
         }
         finally
@@ -113,9 +113,9 @@ public sealed class MonitorSupervisor(MonitorEngine engine,IStateStore store,
         }
     }
     public void Wake(){lock(wakeSync){wake.TrySetResult();}}
-    bool Save()
+    bool Save(bool revocation=false)
     {
-        try{store.Save(engine.State);return true;}
+        try{if(revocation&&store is IReportCommitStore atomic)atomic.SaveRevocation(engine.State);else store.Save(engine.State);return true;}
         catch(Exception){engine.State.Supervisor=engine.State.Supervisor with{Status=MonitorStatus.NeedsAttention,Failure=MonitorFailure.Storage};return false;}
     }
     async Task ValidateCurrent(MonitoringConfiguration config,CancellationToken cancellation)

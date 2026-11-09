@@ -68,4 +68,8 @@ public sealed class AnalysisAttemptArchive(string path,IDataCipher cipher,Action
         catch(MonitoringFault){throw;}
         catch(Exception){throw new MonitoringFault(MonitorFailure.Storage);}
     }
+    public bool IsEmpty()
+    {
+        ensureOpen();var ledger=document.Read();return ledger is null||ledger.Version==1&&ledger.Sources is {Count:0};
+    }
 }

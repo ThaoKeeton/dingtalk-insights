@@ -4,7 +4,7 @@ namespace DingTalkInsights.Desktop;
 
 public sealed partial class MainWindow
 {
-    const string ReviewStorageNotice="结果已保存，但模型状态与人工核实的结构化快照未能保存；重开历史只能显示旧式原文，不保证保留模型判断。";
+    const string ReviewStorageNotice="结果已保存，但结构化快照暂时无法完成保存或恢复；请检查本机存储后重启，并保留所有加密数据文件。";
     bool ReviewRecoveryBlocked=>store.MaintenanceBlocked;
     bool SetReport(AnalysisReport report)
     {

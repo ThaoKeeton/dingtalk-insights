@@ -8,7 +8,7 @@ internal static class ReviewControllerTests
     static void Run(Func<Task> action)=>action().WaitAsync(TimeSpan.FromSeconds(15)).GetAwaiter().GetResult();
     public static IEnumerable<(string,Action)> All()
     {
-        yield return ("unsaved assessment snapshot stays source-unknown after a later source revision",()=>Run(async()=>
+        yield return ("failed snapshot merge blocks new work and recovers the model assessment without repeating it",()=>Run(async()=>
         {
             using var f=new RuntimeTests.Fixture();var c=f.Controller;await c.ConnectAsync(f.CanonicalRoot,true);
             await c.ReadOnceAsync(c.PreviewMonitoring(f.Request),true);await c.UseCredentialsAsync(CredentialLocation.ConnectedStore,CredentialUse.Model,true);
@@ -20,12 +20,9 @@ internal static class ReviewControllerTests
             Check(await c.AnalyzeCandidatesAsync((await c.PreviewAnalysisAsync(new()))!,true),"synthetic analysis failed");
             Check(c.Snapshot.Markdown.Contains("来源状态未明")&&!c.Snapshot.Markdown.Contains("模型输入与本机已保存的来源版本一致"),"failed snapshot claimed current sources");
             f.Cipher.FailReviewArchive=false;
-            f.Services.Read=(scope,_)=>{var batch=RuntimeTests.FakeServices.Batch(scope);return Task.FromResult(batch with{Messages=[batch.Messages[0] with{Text="Synthetic revised body"}]});};
-            await c.ReadOnceAsync(c.PreviewMonitoring(f.Request),true);
-            Check(c.Snapshot.Markdown.Contains("来源状态未明")&&!c.Snapshot.Markdown.Contains("模型输入与本机已保存的来源版本一致")&&f.Services.Models==1&&f.Services.Sends==0,"revised source revived an unsaved current assessment");
-            await c.UseCredentialsAsync(CredentialLocation.ConnectedStore,CredentialUse.Webhook,true);
-            var preview=await c.PreviewSendAsync("Synthetic room");
-            Check(preview is not null&&preview.LegacyFormatRisk&&preview.AlreadyAttempted&&f.Services.Sends==0,"unsaved snapshot bypassed the historical-format send risk gate");
+            try{await c.ReadOnceAsync(c.PreviewMonitoring(f.Request),true);throw new Exception("new work bypassed the pending commit");}catch(RuntimeFault fault){Check(fault.Category==RuntimeFailure.Storage,"wrong pending-commit refusal");}
+            await c.DisconnectAsync();await c.ConnectAsync(f.CanonicalRoot,true);await c.SelectHistoryAsync(c.Snapshot.History.Single());
+            Check(c.Snapshot.Markdown.Contains("模型判断已解决")&&!c.Snapshot.Markdown.Contains("人工确认已解决")&&f.Services.Models==1&&f.Services.Sends==0,"restart lost or repeated the recovered model assessment");
         }));
         yield return ("legacy unknown send cannot replay after the same report gets a new display format",()=>Run(async()=>
         {
@@ -133,10 +130,12 @@ internal static class ReviewControllerTests
         }));
         yield return ("review cleanup failure never grants a canonical handover without durable recovery revocation",()=>Run(async()=>
         {
-            using var f=new RuntimeTests.Fixture(seed:true);var statePath=Path.Combine(f.CanonicalRoot,"state.dpapi");var before=File.ReadAllBytes(statePath);
+            using var f=new RuntimeTests.Fixture(seed:true);var statePath=Path.Combine(f.CanonicalRoot,"state.dpapi");
             File.WriteAllText(Path.Combine(f.CanonicalRoot,"report-reviews.dpapi"),"corrupt synthetic review");f.Clock.Advance(TimeSpan.FromDays(31));
-            try{await f.Controller.ConnectAsync(f.CanonicalRoot,true);throw new Exception("unrevoked handover accepted");}catch(RuntimeFault fault){Check(fault.Category==RuntimeFailure.Storage,"wrong handover refusal");}
-            Check(!f.Controller.Observation.StoreOwned&&before.SequenceEqual(File.ReadAllBytes(statePath))&&f.Services.Calls==0,"failed handover retained authority or rewrote canonical state");
+            Check(await f.Controller.ConnectAsync(f.CanonicalRoot,true)&&f.Controller.Snapshot.Notice.Contains("只读"),"safe read-only handover was unavailable");
+            Check(f.Services.Calls==0&&f.Controller.Snapshot.History.Count==0,"handover exposed expired data or called a service");await f.Controller.DisconnectAsync();
+            using var raw=new EncryptedStateStore(statePath,f.Cipher,new FixedTime(RuntimeTests.Now));var state=raw.ReadRetained();
+            Check(state.Recovery is null&&state.UserStopped&&state.Reports.Count==0&&File.ReadAllText(Path.Combine(f.CanonicalRoot,"report-reviews.dpapi"))=="corrupt synthetic review","handover failed to persist revocation/retention or modified the damaged archive");
         }));
         yield return ("review privacy recovery only permits retained history and explicit clear before new work",()=>Run(async()=>
         {

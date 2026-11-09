@@ -9,6 +9,13 @@ public interface IDataCipher
     byte[] Unprotect(byte[] data);
 }
 public interface IStateStore { InsightState Load(); void Save(InsightState state); }
+public interface IReportCommitStore:IStateStore
+{
+    bool CommitUnavailable{get;}
+    void PrepareReport(InsightState state);
+    void CommitReport(InsightState state,SavedReport saved,AnalysisReport report);
+    void SaveRevocation(InsightState state);
+}
 
 public sealed class EncryptedStateStore : IStateStore,IDisposable
 {
@@ -25,11 +32,13 @@ public sealed class EncryptedStateStore : IStateStore,IDisposable
     public InsightState Load()=>Read(persist:true);
     /// <summary>Retained in-memory view for optional-archive recovery. Never rewrites the canonical file.</summary>
     public InsightState ReadRetained()=>Read(persist:false);
-    InsightState Read(bool persist)
+    /// <summary>For resolving an uncertain atomic replace under the owning lease; never display this untrimmed view.</summary>
+    public InsightState ReadUntrimmedForCommit()=>Read(persist:false,trim:false);
+    InsightState Read(bool persist,bool trim=true)
     {
         if(!File.Exists(path))
         {
-            var empty=new InsightState();empty.Trim(clock.GetUtcNow(),startupRetentionDays??empty.RetentionDays);return empty;
+            var empty=new InsightState();if(trim)empty.Trim(clock.GetUtcNow(),startupRetentionDays??empty.RetentionDays);return empty;
         }
         try
         {
@@ -39,7 +48,7 @@ public sealed class EncryptedStateStore : IStateStore,IDisposable
             {
                 var state=JsonSerializer.Deserialize<InsightState>(plain)??throw new SafetyException("数据为空。");state.Validate();
                 if(persist){state.RetentionDays=startupRetentionDays??state.RetentionDays;Save(state);}
-                else state.Trim(clock.GetUtcNow(),startupRetentionDays??state.RetentionDays);
+                else if(trim)state.Trim(clock.GetUtcNow(),startupRetentionDays??state.RetentionDays);
                 return state;
             }
             finally{CryptographicOperations.ZeroMemory(plain);}
@@ -50,6 +59,22 @@ public sealed class EncryptedStateStore : IStateStore,IDisposable
     {
         var messages=state.Messages.Count;var reports=state.Reports.Count;
         state.Trim(clock.GetUtcNow(),state.RetentionDays);state.Validate();beforePersist?.Invoke(state,state.Messages.Count<messages||state.Reports.Count<reports);
+        Persist(state);
+    }
+    /// <summary>Revoke only recovery authority on the current canonical bytes, even when a sidecar requires repair.</summary>
+    public InsightState RevokeRecovery(DateTimeOffset retentionReference,int retentionDays)
+    {
+        var state=Read(persist:false,trim:false);
+        if(retentionReference>state.RetentionReference)state.RetentionReference=retentionReference;
+        state.RetentionDays=Math.Min(state.RetentionDays,retentionDays);BackgroundPolicy.Revoke(state);state.Validate();Persist(state);return state;
+    }
+    /// <summary>Commit an explicitly requested index clear against current canonical state before deleting sidecars.</summary>
+    public InsightState ClearIndex(DateTimeOffset retentionReference,int retentionDays)
+    {
+        var state=Read(persist:false,trim:false);state.Trim(retentionReference,Math.Min(state.RetentionDays,retentionDays));state.ClearIndex();state.Validate();Persist(state);return state;
+    }
+    void Persist(InsightState state)
+    {
         byte[] plain=JsonSerializer.SerializeToUtf8Bytes(state);string temp=path+"."+Guid.NewGuid()+".tmp";
         try
         {
@@ -67,7 +92,11 @@ public sealed class EncryptedStateStore : IStateStore,IDisposable
 
 public sealed record StoredMessage(string Profile,SourceMessage Message);
 public sealed record CoveredRange(DateTimeOffset Start,DateTimeOffset End);
-public sealed record SavedReport(DateTimeOffset CreatedAt,string ScopeKey,string Task,string Markdown,bool IsDemo=false,DateTimeOffset? OldestSourceAt=null);
+public sealed record SavedReport(DateTimeOffset CreatedAt,string ScopeKey,string Task,string Markdown,bool IsDemo=false,DateTimeOffset? OldestSourceAt=null)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? CommitId{get;init;}
+}
 public sealed record AttemptSource(string MessageKey,DateTimeOffset CreatedAt);
 public sealed record MonitoringOrigin(string Profile,string ConversationId,DateTimeOffset Start)
 {
@@ -107,7 +136,7 @@ public sealed class InsightState
     {
         if(Supervisor is null)throw new MonitoringFault(MonitorFailure.Configuration);
         Supervisor.Validate();
-        if(Version!=1||Messages is null||Watermarks is null||Coverage is null||Attempted is null||Reports is null||AttemptSources is null||Receipts is null||RetentionDays is <1 or >365||ReservedUsd<0||Requests<0||Messages.Count>50000)
+        if(Version!=1||Messages is null||Watermarks is null||Coverage is null||Attempted is null||Reports is null||Reports.Any(r=>r is null||r.CommitId is not null&&!Guid.TryParseExact(r.CommitId,"N",out _))||AttemptSources is null||Receipts is null||RetentionDays is <1 or >365||ReservedUsd<0||Requests<0||Messages.Count>50000)
             throw new SafetyException("本机数据版本或容量不受支持。");
         AnalysisAttemptPolicy.Validate(TaskAttempts);
     }

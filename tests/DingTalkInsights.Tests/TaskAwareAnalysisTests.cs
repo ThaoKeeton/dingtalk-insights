@@ -207,13 +207,14 @@ internal static class TaskAwareAnalysisTests
             try{await c.UseCredentialsAsync(CredentialLocation.ConnectedStore,CredentialUse.Model,true);throw new Exception("read-only connection accepted credentials");}catch(RuntimeFault fault){Check(fault.Category==RuntimeFailure.Storage,"wrong blocked-credentials error");}
             await c.ClearIndexAsync(true);Check(c.Snapshot.History.Count==0&&c.Snapshot.Requests==1&&f.Services.Calls==0,"explicit recovery changed budget or called services");
         }));
-        yield return ("canonical plugin refuses a damaged task ledger while a recovery policy cannot be revoked",()=>Run(async()=>
+        yield return ("canonical plugin revokes recovery before read-only access to a damaged task ledger",()=>Run(async()=>
         {
-            using var f=new RuntimeTests.Fixture(seed:true);var statePath=Path.Combine(f.CanonicalRoot,"state.dpapi");var original=File.ReadAllBytes(statePath);
+            using var f=new RuntimeTests.Fixture(seed:true);var statePath=Path.Combine(f.CanonicalRoot,"state.dpapi");
             File.WriteAllText(Path.Combine(f.CanonicalRoot,"analysis-attempts.dpapi"),"corrupt synthetic ledger");
-            try{await f.Controller.ConnectAsync(f.CanonicalRoot,true);throw new Exception("unrevoked recovery policy was accepted");}
-            catch(RuntimeFault fault){Check(fault.Category==RuntimeFailure.Storage,"wrong blocked-handover error");}
-            Check(!f.Controller.Observation.StoreOwned&&original.SequenceEqual(File.ReadAllBytes(statePath))&&f.Services.Calls==0,"failed handover retained authority or wrote the canonical state");
+            Check(await f.Controller.ConnectAsync(f.CanonicalRoot,true)&&f.Controller.Snapshot.Notice.Contains("只读"),"safe handover was unavailable");
+            Check(f.Controller.Observation.StoreOwned&&f.Services.Calls==0,"safe handover dispatched a service");await f.Controller.DisconnectAsync();
+            using var raw=new EncryptedStateStore(statePath,f.Cipher,new FixedTime(RuntimeTests.Now));var state=raw.ReadUntrimmedForCommit();
+            Check(state.Recovery is null&&state.UserStopped&&File.ReadAllText(Path.Combine(f.CanonicalRoot,"analysis-attempts.dpapi"))=="corrupt synthetic ledger","handover failed to revoke recovery or changed the damaged ledger");
         }));
     }
     static Task<ModelResult> Fake(MessageBatch batch,string task,CancellationToken _)=>Task.FromResult(new ModelResult(new AnalysisReport(batch,[],[],task),1,1));

@@ -1,4 +1,4 @@
-# Workbench native plugin 0.3.5
+# Workbench native plugin 0.3.6
 
 The installable DLL plugin ID is `com.projectworkbench.dingtalk-insights`, entry `DingTalkInsights.Workbench.InsightPlugin`. It targets .NET 10 / Windows 10 SDK 19041 / x64 with WindowsAppSDK **1.8.260921001**, API **1**, runtime services **1**, minimum host **0.2.0**. The maintained standalone stays v0.2 / .NET 8 / its existing AppSDK pin.
 
@@ -54,4 +54,4 @@ Version0.3.3 adds [persistent human verification](durable-review.md) shared with
 
 Version0.3.4 adds [task-scoped on-demand analysis](task-aware-analysis.md) shared with standalone0.2.2. SDK/host pins and background/send authority stay unchanged. Historical0.3.3 evidence is not substituted for this version’s exact-commit CI.
 
-Version0.3.5 and standalone0.2.3 display the model’s evidence-backed assessment without requiring individual human review. Human confirmation remains distinct and optional; compatibility and failed-snapshot limits are in [routine model assessments](routine-model-assessments.md).
+Version0.3.6 and standalone0.2.4 display the model’s evidence-backed assessment without requiring individual human review. Human confirmation remains distinct and optional; compatibility and failed-snapshot limits are in [routine model assessments](routine-model-assessments.md).

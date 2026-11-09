@@ -118,7 +118,7 @@ public sealed partial class InsightController
                 if(store is not null)
                 {
                     BackgroundPolicy.Revoke(state);
-                    try{store.Save(state);}catch(Exception){failure=new RuntimeFault(RuntimeFailure.Storage);}
+                    try{store.SaveRevocation(state);}catch(Exception){failure=new RuntimeFault(RuntimeFailure.Storage);}
                 }
                 if(disconnect)
                 {
@@ -151,10 +151,14 @@ public sealed partial class InsightController
         Publish();
     }
     IStateStore OwnedStore(long expected)=>new OperationStore(this,store??throw new RuntimeFault(RuntimeFailure.Connection),expected);
-    sealed class OperationStore(InsightController owner,BusinessStore store,long expected):IStateStore
+    sealed class OperationStore(InsightController owner,BusinessStore store,long expected):IReportCommitStore
     {
+        public bool CommitUnavailable=>store.CommitUnavailable;
         public InsightState Load(){lock(owner.sync){Check();return store.Load();}}
         public void Save(InsightState value){lock(owner.sync){Check();store.Save(value);owner.ownedStoreWrites++;}}
+        public void PrepareReport(InsightState value){lock(owner.sync){Check();store.PrepareReport(value);}}
+        public void CommitReport(InsightState value,SavedReport saved,AnalysisReport report){lock(owner.sync){Check();store.CommitReport(value,saved,report);owner.ownedStoreWrites++;}}
+        public void SaveRevocation(InsightState value){lock(owner.sync){Check();store.SaveRevocation(value);owner.ownedStoreWrites++;}}
         void Check()
         {
             if(!ReferenceEquals(owner.store,store)||(!owner.retirementWrite.Value&&(owner.generation!=expected||owner.stopCount>0||owner.deactivated||owner.lifetime.IsCancellationRequested)))

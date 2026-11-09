@@ -113,11 +113,10 @@ public sealed partial class InsightController:IAsyncDisposable
             catch(SafetyException){throw new RuntimeFault(RuntimeFailure.Ownership);}
             try
             {
-                var loaded=opened.Load();var hadRecovery=loaded.Recovery is not null;BackgroundPolicy.Revoke(loaded);var readOnly=false;
-                try{opened.Save(loaded);}
-                catch(MonitoringFault fault)when(fault.Category==MonitorFailure.Storage&&opened.AnalysisMaintenanceBlocked&&!hadRecovery){readOnly=true;}
+                var loaded=opened.Load();BackgroundPolicy.Revoke(loaded);var readOnly=opened.MaintenanceBlocked;
+                if(readOnly)opened.SaveRevocation(loaded);else opened.Save(loaded);
                 Commit(operation,()=>{store=opened;state=loaded;canonicalRoot=root;connection=RuntimeConnection.Canonical;ClearVisible();ClearCredentialUse();
-                    notice=readOnly?"已连接只读历史；先前没有恢复授权。整理尝试侧账不可用，修复或明确清理前不会读取凭据、采集、整理或发送。":"已连接同一个规范账本；恢复权限已撤销，尚未读取来源或使用凭据。";});
+                    notice=readOnly?"已连接只读历史；恢复权限已撤销或原本不存在。存储文件需要修复或明确清理，之前不会读取凭据、采集、整理或发送。":"已连接同一个规范账本；恢复权限已撤销，尚未读取来源或使用凭据。";});
                 return Task.FromResult(true);
             }
             catch{opened.Dispose();throw;}
@@ -155,7 +154,7 @@ public sealed partial class InsightController:IAsyncDisposable
         if(candidates?.Messages.Any(m=>m.CreatedAt<state.RetentionCutoff)==true)candidates=null;
         if(reportOldest is {} oldest&&(oldest<state.RetentionCutoff||review is {} view&&!state.Reports.Contains(view.Saved))){report=null;review=null;markdown="";reportOldest=null;previews.Clear();}
     }
-    const string ReviewStorageNotice="结果已保存，但模型状态与人工核实的结构化快照未能保存；重开历史只能显示旧式原文，不保证保留模型判断。";
+    const string ReviewStorageNotice="结果已保存，但结构化快照暂时无法完成保存或恢复；请检查本机存储后重启，并保留所有加密数据文件。";
     bool SetReport(AnalysisReport value)
     {
         previews.Clear();review=null;report=value;markdown=ReportRenderer.Display(value,ReportInputContext.Unknown);reportOldest=value.Batch.Messages.Min(m=>m.CreatedAt);
@@ -204,7 +203,7 @@ public sealed partial class InsightController:IAsyncDisposable
         root=Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         for(var directory=new DirectoryInfo(root);directory is not null;directory=directory.Parent)
             if(!directory.Exists||(directory.Attributes&FileAttributes.ReparsePoint)!=0)throw new RuntimeFault(RuntimeFailure.Connection);
-        foreach(var name in new[]{"state.dpapi","state.dpapi.lock","credentials.dpapi","send-attempts.dpapi","report-reviews.dpapi","report-reviews.dpapi.blocked","analysis-attempts.dpapi"})
+        foreach(var name in new[]{"state.dpapi","state.dpapi.lock","credentials.dpapi","send-attempts.dpapi","report-reviews.dpapi","report-reviews.dpapi.blocked","report-commit.dpapi","index-clear.dpapi","analysis-attempts.dpapi"})
         {
             var path=Path.Combine(root,name);
             if(File.Exists(path)&&(File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)throw new RuntimeFault(RuntimeFailure.Connection);

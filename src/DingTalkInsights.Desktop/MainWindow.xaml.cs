@@ -123,7 +123,7 @@ public sealed partial class MainWindow:Window
         settingsPage=Scroll(settings);pages["settings"]=settingsPage;
         var help=Panel();help.Children.Add(Card("接入条件",Label("1. 独立安装官方 DWS，并在自己的电脑完成 dws auth login。企业未开通 CLI 时仍需管理员授权。\n2. 用 dws profile list 核对 corpId:userId；把明确身份与会话 ID 配置到本应用。\n3. 首先用一个会话与短时间范围核对消息数、时间和内容。\n4. 确认公司政策允许后，再配置新应用专用 OpenAI 密钥并开启上传。开发测试无需真实密钥。")));
         help.Children.Add(Card("首版的范围",Label("支持登录用户会话中的托盘持续检查和明确选择的启动后恢复、本机加密消息索引、断点追赶、关键词搜索、候选整理、人工核实、导出与手动 Webhook。\n关闭到托盘和重启恢复分别明确授权；通知区域失效时保持或恢复窗口。应用必须由已登录用户手动打开。暂不提供 Windows 服务、开机自启动、实时事件订阅、自动更新或附件正文解析。轮询可能漏掉查询窗口外的编辑、撤回或平台不可见历史；这类内容必须回钉钉核实。\n缺页、解析失败和授权失败暂停。仅明确可重试的 DWS 故障有界退避；预算耗尽时保留候选并继续采集，模型等下个 UTC 日；未知模型结果保留费用与尝试并暂停 AI，不跨过未知缺口。单次读取最多 1000 条，密集会话请缩小起始范围。\n消息默认保留 30 天，最大 50000 条；加密状态上限 32 MiB。超限会暂停，不静默丢弃。最近保留 100 份结果。\nWebhook 超时会标为结果不确定，先检查钉钉再决定重试。")));
-        help.Children.Add(Card("本机数据位置",Label(dataRoot+"\nstate.dpapi：消息、断点、尝试记录、费用预留和结果。\ncredentials.dpapi：本应用凭据。\nsend-attempts.dpapi：仅保存发送目标、正文与报告身份摘要及尝试状态，不自动重发。\nreport-reviews.dpapi：证据快照与人工核实/撤销，备份交接时保留。\nanalysis-attempts.dpapi：按事项与来源修订去重，备份交接时保留。\nsettings.json：不含密钥的普通设置。\nWindows DPAPI 仅保护静态文件；同一 Windows 用户下的恶意进程不在本应用隔离能力内。")));
+        help.Children.Add(Card("本机数据位置",Label(dataRoot+"\nstate.dpapi：消息、断点、尝试记录、费用预留和结果。\ncredentials.dpapi：本应用凭据。\nsend-attempts.dpapi：仅保存发送目标、正文与报告身份摘要及尝试状态，不自动重发。\nreport-reviews.dpapi：证据快照与人工核实/撤销，备份交接时保留。\nreport-commit.dpapi、index-clear.dpapi：未完成的结果恢复和清理意图；出现时与整个数据目录一起保留。\nanalysis-attempts.dpapi：按事项与来源修订去重，备份交接时保留。\nsettings.json：不含密钥的普通设置。\nWindows DPAPI 仅保护静态文件；同一 Windows 用户下的恶意进程不在本应用隔离能力内。")));
         pages["help"]=Scroll(help);
     }
 

@@ -2,7 +2,7 @@
 
 独立 Windows 原生应用：持续检查选定钉钉会话，发现可能的沟通难点；也可以输入整理事项，搜索相关消息后形成带来源的模型整理结果。界面查看、导出 Markdown，按需发送到已确认的钉钉 Webhook。
 
-v0.2.3 使用 WinUI 3 与 .NET 8。默认模拟模式，不自动登录、采集、上传或发送。适用于 Windows 10 19041+ / Windows 11 x64。
+v0.2.4 使用 WinUI 3 与 .NET 8。默认模拟模式，不自动登录、采集、上传或发送。适用于 Windows 10 19041+ / Windows 11 x64。
 
 ## 两种用法
 
@@ -62,7 +62,7 @@ GitHub Actions 的 [Windows native MVP](.github/workflows/windows.yml) 运行核
 
 后台策略、实现决策与测试清单见 [v0.2 背景监控设计](docs/background-monitoring.md)。
 
-## Workbench 原生插件 v0.3.5（模型判断与按事项整理）
+## Workbench 原生插件 v0.3.6（模型判断与崩溃恢复）
 
 本分支已提取 .NET 8 `DingTalkInsights.Runtime`，与独立应用共用 Core、DPAPI 格式和规范账本独占锁；初始化/导航不连接真实服务。真实数据仅在明确连接标准独立应用数据目录后使用同一个物理账本，保留费用预留、来源和未知尝试；凭据用途另行确认，不继承恢复授权。停用/退出一律取消并等实际工作退役，重新启用需要明确开始。
 
@@ -77,3 +77,5 @@ GitHub Actions 的 [Windows native MVP](.github/workflows/windows.yml) 运行核
 按需整理按来源修订与事项文本分别去重；复用先前来源前需要单独确认不同事项及可能再次计费，再确认精确请求。旧版未区分事项的尝试保守视为结果不明。范围、旧版回退及合成验证见 [按事项整理](docs/task-aware-analysis.md)。
 
 常规整理直接展示模型判断，人工核实为可选操作；新版快照与旧版账本的兼容性及失败边界见 [模型判断说明](docs/routine-model-assessments.md)。
+
+报告与模型原始状态采用加密恢复日志，处理结果保存期间的进程中断；交接或回退前请保留完整数据目录并先用新版完成恢复。恢复、安全限制和合成复现见 [报告崩溃恢复](docs/report-commit-recovery.md)。

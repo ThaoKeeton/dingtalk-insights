@@ -1,7 +1,7 @@
 name: Workbench native plugin acceptance
 on:
   push:
-    branches: [main, 'codex/workbench-plugin', 'codex/durable-review', 'codex/task-aware-analysis', 'codex/routine-assessment']
+    branches: [main, 'codex/workbench-plugin', 'codex/durable-review', 'codex/task-aware-analysis', 'codex/routine-assessment', 'codex/atomic-report-snapshot']
   pull_request:
     branches: [main]
   workflow_dispatch:

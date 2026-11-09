@@ -3,11 +3,12 @@ using DingTalkInsights.Core;
 namespace DingTalkInsights.Runtime;
 
 /// <summary>All operations share BusinessStore's canonical lease. No original report, budget or attempt is rewritten.</summary>
-public sealed class ReportReviewArchive(string path,IDataCipher cipher,Action ensureOpen,Action<string>? persistUnavailableMarker=null)
+public sealed class ReportReviewArchive(string path,IDataCipher cipher,Action ensureOpen,Action<string>? persistUnavailableMarker=null,Func<bool>? commitBlocked=null)
 {
     readonly EncryptedDocument<ReportReviewLedger> document=new(path,cipher,16*1024*1024);
     readonly string blockedPath=path+".blocked";
     bool Blocked=>File.Exists(blockedPath)||Directory.Exists(blockedPath);
+    void RequireCommitAvailable(){if(commitBlocked?.Invoke()==true)throw new MonitoringFault(MonitorFailure.Storage);}
     static void RequireSaved(InsightState state,SavedReport saved)
     {
         if(!state.Reports.Contains(saved)||saved.OldestSourceAt is not {} oldest||oldest<state.RetentionCutoff||saved.CreatedAt<state.RetentionCutoff)
@@ -20,7 +21,7 @@ public sealed class ReportReviewArchive(string path,IDataCipher cipher,Action en
         catch(MonitoringFault){throw;}
         catch(Exception){throw new MonitoringFault(MonitorFailure.Storage);}
     }
-    ReportReviewLedger Load(InsightState state,bool maintenance=false,Action? removingEvidence=null)
+    ReportReviewLedger Load(InsightState state,bool maintenance=false,Action? removingEvidence=null,IReadOnlyList<SavedReport>? preserveReports=null,bool persistChanges=true)
     {
         if(!maintenance&&Blocked)throw new MonitoringFault(MonitorFailure.Storage);
         var ledger=document.Read()??new();
@@ -29,6 +30,9 @@ public sealed class ReportReviewArchive(string path,IDataCipher cipher,Action en
         var groups=state.Reports.Where(r=>r.OldestSourceAt>=state.RetentionCutoff&&r.CreatedAt>=state.RetentionCutoff)
             .GroupBy(ReportReviewSnapshot.Key).ToArray();
         var retained=groups.ToDictionary(g=>g.Key,g=>g.First());var duplicates=groups.Where(g=>g.Skip(1).Any()).Select(g=>g.Key).ToHashSet();
+        if(preserveReports is not null)
+            foreach(var saved in preserveReports.Where(r=>r.CreatedAt>=state.RetentionCutoff&&r.OldestSourceAt>=state.RetentionCutoff))
+                retained.TryAdd(ReportReviewSnapshot.Key(saved),saved);
         state.AmbiguousReports.Clear();
         var changed=false;
         foreach(var (key,entry) in ledger.Reports.ToArray())
@@ -41,15 +45,15 @@ public sealed class ReportReviewArchive(string path,IDataCipher cipher,Action en
             if(next.Ambiguous||next.Invalidated&&next.InputRevisions is null)state.AmbiguousReports.Add(key);
             if(next!=entry){ledger.Reports[key]=next;changed=true;}
         }
-        if(changed)document.Save(ledger);
+        if(changed&&persistChanges)document.Save(ledger);
         return ledger;
     }
     public void Prune(InsightState state)=>Safe(()=>{_ = Load(state);return true;});
     // A presence-only, non-sensitive durable barrier prevents stale certainty after a failed
     // invalidation, including a later old-binary A→B→A rewrite. Never automatically unblock.
-    public bool Maintain(InsightState state,bool requiredPrune=false)=>Safe(()=>
+    public bool Maintain(InsightState state,bool requiredPrune=false,IReadOnlyList<SavedReport>? preserveReports=null)=>Safe(()=>
     {
-        try{_ = Load(state,maintenance:true,removingEvidence:()=>requiredPrune=true);return !Blocked;}
+        try{_ = Load(state,maintenance:true,removingEvidence:()=>requiredPrune=true,preserveReports:preserveReports);return !Blocked;}
         catch(MonitoringFault fault)when(fault.Category==MonitorFailure.Storage)
         {
             if(!Blocked)
@@ -71,8 +75,45 @@ public sealed class ReportReviewArchive(string path,IDataCipher cipher,Action en
         }
     });
     public void Clear()=>Safe(()=>{document.Save(new());File.Delete(blockedPath);return true;});
+    public bool IsEmpty()=>Safe(()=>{var ledger=document.Read();return ledger is null||ledger.Version==1&&ledger.Reports is {Count:0};});
+    public void MergePending(InsightState state,PendingReportCommit pending,bool recovered)=>Safe(()=>
+    {
+        var saved=state.Reports.SingleOrDefault(r=>r.CommitId==pending.Saved.CommitId&&ReportReviewSnapshot.Key(r)==ReportReviewSnapshot.Key(pending.Saved))
+            ??throw new MonitoringFault(MonitorFailure.Storage);
+        RequireSaved(state,saved);var ledger=Load(state,persistChanges:false);var key=ReportReviewSnapshot.Key(saved);
+        if(ledger.Reports.TryGetValue(key,out var existing))
+        {
+            _=existing.Original(saved);var candidate=pending.Snapshot;
+            if(existing.Ambiguous||existing.Scope!=candidate.Scope||existing.Complete!=candidate.Complete||existing.ModelJson!=candidate.ModelJson||
+                !existing.Sources.SequenceEqual(candidate.Sources)||!existing.Warnings.SequenceEqual(candidate.Warnings)||
+                existing.InputRevisions is null||candidate.InputRevisions is null||existing.InputRevisions.Count!=candidate.InputRevisions.Count||
+                existing.InputRevisions.Any(p=>!candidate.InputRevisions.TryGetValue(p.Key,out var revision)||revision!=p.Value))
+                throw new MonitoringFault(MonitorFailure.Storage);
+            // An existing record owns its human decisions and sticky invalidation flags.
+        }
+        else
+        {
+            var snapshot=pending.Snapshot;
+            if(recovered||!snapshot.EvidenceCurrent(state))snapshot=snapshot with{Invalidated=true};
+            if(recovered||snapshot.InputsCurrent(state)==false)snapshot=snapshot with{InputsInvalidated=true};
+            ledger.Reports.Add(key,snapshot);
+        }
+        document.Save(ledger);return true;
+    });
+    public void EnsureCommittedSnapshots(InsightState state,PendingReportCommit? pending)=>Safe(()=>
+    {
+        var ledger=Load(state);
+        foreach(var saved in state.Reports.Where(r=>r.CommitId is not null))
+        {
+            var key=ReportReviewSnapshot.Key(saved);
+            if(!ledger.Reports.ContainsKey(key)&&!(pending is not null&&pending.Saved.CommitId==saved.CommitId&&ReportReviewSnapshot.Key(pending.Saved)==key))
+                throw new MonitoringFault(MonitorFailure.Storage);
+        }
+        return true;
+    });
     public ReportReviewView Capture(InsightState state,AnalysisReport report)=>Safe(()=>
     {
+        RequireCommitAvailable();
         var original=ReportRenderer.Markdown(report);
         var saved=state.Reports.LastOrDefault(r=>r.Markdown==original&&r.Task==report.Task&&r.ScopeKey==report.Batch.Scope.Key&&r.IsDemo==report.Batch.IsDemo)
             ??throw new MonitoringFault(MonitorFailure.Storage);
@@ -103,8 +144,11 @@ public sealed class ReportReviewArchive(string path,IDataCipher cipher,Action en
     });
     public ReportReviewView Open(InsightState state,SavedReport saved)=>Safe(()=>
     {
+        RequireCommitAvailable();
         RequireSaved(state,saved);var ledger=Load(state);
-        return ledger.Reports.TryGetValue(ReportReviewSnapshot.Key(saved),out var snapshot)?snapshot.View(state,saved):ReportReviewView.Legacy(saved);
+        if(ledger.Reports.TryGetValue(ReportReviewSnapshot.Key(saved),out var snapshot))return snapshot.View(state,saved);
+        if(saved.CommitId is not null)throw new MonitoringFault(MonitorFailure.Storage);
+        return ReportReviewView.Legacy(saved);
     });
     public ReportReviewView OpenReadable(InsightState state,SavedReport saved)=>Safe(()=>
     {
@@ -117,6 +161,7 @@ public sealed class ReportReviewArchive(string path,IDataCipher cipher,Action en
         if(!evidenceReviewed)throw new SafetyException("请先核对原会话证据后明确确认本次核实。");
         return Safe(()=>
         {
+            RequireCommitAvailable();
             RequireSaved(state,preview.Saved);var ledger=Load(state);
             if(!ledger.Reports.TryGetValue(preview.Key,out var snapshot))throw new MonitoringFault(MonitorFailure.Configuration);
             var current=snapshot.View(state,preview.Saved);

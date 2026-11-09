@@ -27,7 +27,7 @@ internal static class PackageMaintenanceTests
                 Require((await store.CancelPendingAsync(PackageMaintenance.Id)).Succeeded&&store.PendingOperations.Count==0,"real cancellation failed");
                 Require((await store.StageUpdateAsync(PackageMaintenance.Id,future)).Succeeded,"restaging failed");checks++;
             }
-            await f.Command(true,"apply");Require(f.Version()=="0.3.6","fresh helper did not update");await f.Command(true,"apply");checks++;
+            await f.Command(true,"apply");Require(f.Version()=="0.3.7","fresh helper did not update");await f.Command(true,"apply");checks++;
             File.AppendAllText(f.CurrentData,"current data after update, never restore old backup");var current=PackageMaintenance.Preserved(f.Path);var updated=PackageMaintenance.Fingerprint(f.Installed);
             await f.Command(true,"remove");Require(Directory.Exists(f.Installed),"staged remove changed active code");await f.Command(true,"apply");
             Require(!Directory.Exists(f.Installed),"SDK remove left current package");checks++;
@@ -76,16 +76,16 @@ internal static class PackageMaintenanceTests
         {
             Path=System.IO.Path.Combine(System.IO.Path.GetTempPath(),"DingTalkInsights-WorkbenchAcceptance",runId);Directory.CreateDirectory(Path);
             File.WriteAllText(System.IO.Path.Combine(Path,".dti-acceptance-owner.json"),JsonSerializer.Serialize(new{runId,purpose="synthetic SDK package integration"}));
-            foreach(var relative in new[]{"user/data/"+PackageMaintenance.Id+"/synthetic-config.dpapi","user/data/"+PackageMaintenance.Id+"/demo/report-reviews.dpapi","user/data/"+PackageMaintenance.Id+"/demo/analysis-attempts.dpapi","user/settings/"+PackageMaintenance.Id+"/synthetic.json","user/secrets/"+PackageMaintenance.Id+"/ciphertext-sentinel.bin","external-canonical/state.dpapi","external-canonical/send-attempts.dpapi","external-canonical/report-reviews.dpapi","external-canonical/analysis-attempts.dpapi"})
+            foreach(var relative in new[]{"user/data/"+PackageMaintenance.Id+"/synthetic-config.dpapi","user/data/"+PackageMaintenance.Id+"/demo/report-reviews.dpapi","user/data/"+PackageMaintenance.Id+"/demo/report-commit.dpapi","user/data/"+PackageMaintenance.Id+"/demo/index-clear.dpapi","user/data/"+PackageMaintenance.Id+"/demo/analysis-attempts.dpapi","user/settings/"+PackageMaintenance.Id+"/synthetic.json","user/secrets/"+PackageMaintenance.Id+"/ciphertext-sentinel.bin","external-canonical/state.dpapi","external-canonical/send-attempts.dpapi","external-canonical/report-reviews.dpapi","external-canonical/report-commit.dpapi","external-canonical/index-clear.dpapi","external-canonical/analysis-attempts.dpapi"})
             {var target=System.IO.Path.Combine(Path,relative);Directory.CreateDirectory(System.IO.Path.GetDirectoryName(target)!);File.WriteAllBytes(target,[71,14,12,9,3]);}
         }
         public FileStream Lease()=>new(System.IO.Path.Combine(Path,"user","host.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
         public string Version()=>JsonNode.Parse(File.ReadAllText(System.IO.Path.Combine(Installed,"plugin.json")))!["version"]!.GetValue<string>();
         public string Future(string source)
         {
-            var target=System.IO.Path.Combine(Path,"synthetic-0.3.6-code-update");Directory.CreateDirectory(target);
+            var target=System.IO.Path.Combine(Path,"synthetic-0.3.7-code-update");Directory.CreateDirectory(target);
             foreach(var path in Directory.EnumerateFiles(source,"*",SearchOption.AllDirectories)){var destination=System.IO.Path.Combine(target,System.IO.Path.GetRelativePath(source,path));Directory.CreateDirectory(System.IO.Path.GetDirectoryName(destination)!);File.Copy(path,destination);}
-            var manifest=System.IO.Path.Combine(target,"plugin.json");var json=JsonNode.Parse(File.ReadAllText(manifest))!;json["version"]="0.3.6";File.WriteAllText(manifest,json.ToJsonString());
+            var manifest=System.IO.Path.Combine(target,"plugin.json");var json=JsonNode.Parse(File.ReadAllText(manifest))!;json["version"]="0.3.7";File.WriteAllText(manifest,json.ToJsonString());
             var inventory=Directory.EnumerateFiles(target,"*",SearchOption.AllDirectories).Where(p=>System.IO.Path.GetFileName(p)!="inventory.json").ToDictionary(p=>System.IO.Path.GetRelativePath(target,p).Replace('\\','/'),p=>Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(p))));File.WriteAllText(System.IO.Path.Combine(target,"inventory.json"),JsonSerializer.Serialize(inventory));
             return target;
         }

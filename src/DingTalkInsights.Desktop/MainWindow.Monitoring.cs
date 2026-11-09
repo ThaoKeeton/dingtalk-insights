@@ -94,7 +94,7 @@ public sealed partial class MainWindow
             var current=supervisor;
             try{if(current is not null)await current.StopAsync(revokeRecovery);}
             finally{if(retiring is not null)await retiring.Retired.Task;}
-            if(current is null&&revokeRecovery){BackgroundPolicy.Revoke(state);store.Save(state);}
+            if(current is null&&revokeRecovery){BackgroundPolicy.Revoke(state);if(store is IReportCommitStore atomic)atomic.SaveRevocation(state);else store.Save(state);}
             if(monitorTask is not null)await monitorTask;
             if(revokeRecovery)saveRecovery.IsOn=false;
             UpdateMonitorControls();RefreshStatus();
