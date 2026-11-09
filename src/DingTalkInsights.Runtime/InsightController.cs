@@ -155,15 +155,24 @@ public sealed partial class InsightController:IAsyncDisposable
         if(candidates?.Messages.Any(m=>m.CreatedAt<state.RetentionCutoff)==true)candidates=null;
         if(reportOldest is {} oldest&&(oldest<state.RetentionCutoff||review is {} view&&!state.Reports.Contains(view.Saved))){report=null;review=null;markdown="";reportOldest=null;previews.Clear();}
     }
-    const string ReviewStorageNotice="结果已保存，但人工核实快照未能保存；请检查本机存储后重新打开，不会显示已持久核实成功。";
+    const string ReviewStorageNotice="结果已保存，但模型状态与人工核实的结构化快照未能保存；重开历史只能显示旧式原文，不保证保留模型判断。";
     bool SetReport(AnalysisReport value)
     {
-        previews.Clear();review=null;report=value;markdown=ReportRenderer.Markdown(value);reportOldest=value.Batch.Messages.Min(m=>m.CreatedAt);
+        previews.Clear();review=null;report=value;markdown=ReportRenderer.Display(value,ReportInputContext.Unknown);reportOldest=value.Batch.Messages.Min(m=>m.CreatedAt);
         try{ApplyReview(store!.Reviews.Capture(state,value));return true;}
         catch(Exception){notice=ReviewStorageNotice;return false;}
     }
     void ApplyReview(ReportReviewView value)
     {review=value;report=value.Report;markdown=value.Markdown;reportOldest=value.Saved.OldestSourceAt;}
+    ReportSendIdentity CurrentSendIdentity()
+    {
+        if(review is {} view)return view.SendIdentity;
+        if(report is not {} value)throw new RuntimeFault(RuntimeFailure.Configuration);
+        var canonical=ReportRenderer.Markdown(value);
+        var saved=state.Reports.LastOrDefault(r=>r.Markdown==canonical&&r.Task==value.Task&&r.ScopeKey==value.Batch.Scope.Key&&r.IsDemo==value.Batch.IsDemo)
+            ??throw new RuntimeFault(RuntimeFailure.Storage);
+        return new(ReportReviewSnapshot.Key(saved),Array.AsReadOnly(new[]{saved.Markdown}),true);
+    }
     void RefreshReview()
     {
         if(review is not {} current)return;

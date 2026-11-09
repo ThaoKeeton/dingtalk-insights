@@ -73,8 +73,13 @@ public sealed partial class InsightController
         {
             RequireSendableReport();var credential=await PrivateCredentialsAsync(CredentialUse.Webhook,operation.Generation,operation.Token);
             var target=new WebhookTarget(destinationName,credential.WebhookUrl,credential.WebhookSecret);target.Validate();
-            var ledger=store!.SendAttempts.Load();ledger.Validate();ledger.Attempts.TryGetValue(DurableWebhookSender.AttemptKey(target,markdown),out var previous);
-            Commit(operation,()=>result=new(NewAuthority(CredentialUse.Webhook),target.Name,Guard.Hash(target.Url)[..12],markdown,WebhookClient.Fingerprint(target,markdown),previous));return true;
+            var identity=CurrentSendIdentity();var content=markdown;var ledger=store!.SendAttempts.Load();
+            var previous=DurableWebhookSender.FindPrevious(ledger,target,content,identity);
+            Commit(operation,()=>
+            {
+                EnforceRetention();RequireSendableReport();if(markdown!=content||!identity.SameAs(CurrentSendIdentity()))throw new RuntimeFault(RuntimeFailure.Configuration);
+                result=new(NewAuthority(CredentialUse.Webhook),target.Name,Guard.Hash(target.Url)[..12],content,WebhookClient.Fingerprint(target,content),previous,identity);
+            });return true;
         },RuntimeFailure.Storage,cancellation);return result;
     }
     public async Task<ResolutionPreview?> PreviewResolutionAsync(int index,bool resolved,CancellationToken cancellation=default)

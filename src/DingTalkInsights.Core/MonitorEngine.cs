@@ -82,8 +82,11 @@ public sealed class MonitorEngine(InsightState state,IStateStore store)
         catch(MonitoringFault e)when(e.Category is MonitorFailure.Configuration or MonitorFailure.Storage or MonitorFailure.Retention){throw;}
         catch(Exception e){throw new ModelAttemptFailure(e is MonitoringFault{Category:MonitorFailure.ModelAuthorization}?MonitorFailure.ModelAuthorization:MonitorFailure.ModelUnknown);}
         var previousReports=state.Reports;var previousInput=state.InputTokens;var previousOutput=state.OutputTokens;
+        var saved=new SavedReport(now,batch.Scope.Key,task,ReportRenderer.Markdown(result.Report),batch.IsDemo,batch.Messages.Min(m=>m.CreatedAt));
+        try{while(previousReports.Contains(saved))saved=saved with{CreatedAt=saved.CreatedAt.AddTicks(1)};}
+        catch(ArgumentOutOfRangeException){throw new MonitoringFault(MonitorFailure.Storage);}
         state.InputTokens+=result.InputTokens;state.OutputTokens+=result.OutputTokens;
-        state.Reports=previousReports.Append(new SavedReport(now,batch.Scope.Key,task,ReportRenderer.Markdown(result.Report),batch.IsDemo,batch.Messages.Min(m=>m.CreatedAt))).TakeLast(100).ToList();
+        state.Reports=previousReports.Append(saved).TakeLast(100).ToList();
         try{Save();}
         catch
         {

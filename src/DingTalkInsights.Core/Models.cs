@@ -42,7 +42,7 @@ public sealed record MessageBatch(QueryScope Scope, IReadOnlyList<SourceMessage>
 
 public enum IssueStatus { Open, InProgress, PendingVerification, Resolved }
 public sealed record Evidence(SourceMessage Message, string Quote);
-public sealed class Issue(string title, string summary, IssueStatus status, string communication, string nextStep, IReadOnlyList<Evidence> evidence)
+public sealed class Issue(string title, string summary, IssueStatus status, string communication, string nextStep, IReadOnlyList<Evidence> evidence,bool modelReportedResolved=false)
 {
     public string Title { get; } = title;
     public string Summary { get; } = summary;
@@ -50,8 +50,12 @@ public sealed class Issue(string title, string summary, IssueStatus status, stri
     public string Communication { get; } = communication;
     public string NextStep { get; } = nextStep;
     public IReadOnlyList<Evidence> Evidence { get; } = evidence;
+    // A model assessment is not an operator's verification or a change to the human status.
+    public bool ModelReportedResolved { get; } = modelReportedResolved;
     public bool HumanConfirmed { get; private set; }
     public string StatusLabel => Status switch { IssueStatus.Open => "待处理 · 待核实", IssueStatus.InProgress => "沟通中 · 待核实", IssueStatus.Resolved => "人工确认已解决", _ => "待验证 · 待核实" };
+    public string AssessmentLabel => HumanConfirmed ? "人工确认已解决" : ModelReportedResolved ? "模型判断已解决（未人工确认）" : Status switch
+    { IssueStatus.Open => "模型判断待处理（未人工确认）", IssueStatus.InProgress => "模型判断沟通中（未人工确认）", IssueStatus.Resolved => "解决状态未人工确认", _ => "待验证（未人工确认）" };
     internal void Confirm() { Status = IssueStatus.Resolved; HumanConfirmed = true; }
 }
 

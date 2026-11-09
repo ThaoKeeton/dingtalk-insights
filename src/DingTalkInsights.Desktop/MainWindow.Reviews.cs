@@ -4,11 +4,11 @@ namespace DingTalkInsights.Desktop;
 
 public sealed partial class MainWindow
 {
-    const string ReviewStorageNotice="结果已保存，但人工核实快照未能保存；请检查本机存储后重试核实。";
+    const string ReviewStorageNotice="结果已保存，但模型状态与人工核实的结构化快照未能保存；重开历史只能显示旧式原文，不保证保留模型判断。";
     bool ReviewRecoveryBlocked=>store.MaintenanceBlocked;
     bool SetReport(AnalysisReport report)
     {
-        review=null;currentReport=report;displayedSavedReport=null;markdown=ReportRenderer.Markdown(report);displayedDemo=report.Batch.IsDemo;
+        review=null;currentReport=report;displayedSavedReport=null;markdown=ReportRenderer.Display(report,ReportInputContext.Unknown);displayedDemo=report.Batch.IsDemo;
         reportBox.Text=markdown;issuePicker.ItemsSource=report.Issues;if(report.Issues.Count>0)issuePicker.SelectedIndex=0;
         RefreshHistory(clearSelection:true);
         try{ApplyReview(store.Reviews.Capture(state,report));return true;}
@@ -20,6 +20,15 @@ public sealed partial class MainWindow
         review=value;currentReport=value.Report;displayedSavedReport=value.Saved;markdown=value.Markdown;displayedDemo=value.Saved.IsDemo;
         reportBox.Text=markdown;issuePicker.ItemsSource=value.Report?.Issues;
         if(value.Report?.Issues.Count>0)issuePicker.SelectedIndex=Math.Clamp(selected,0,value.Report.Issues.Count-1);
+    }
+    ReportSendIdentity CurrentSendIdentity()
+    {
+        if(review is {} view)return view.SendIdentity;
+        if(currentReport is not {} value)throw new SafetyException("没有可发送的完整报告。");
+        var canonical=ReportRenderer.Markdown(value);
+        var saved=state.Reports.LastOrDefault(r=>r.Markdown==canonical&&r.Task==value.Task&&r.ScopeKey==value.Batch.Scope.Key&&r.IsDemo==value.Batch.IsDemo)
+            ??throw new SafetyException("报告尚未持久保存，无法安全检查发送记录。");
+        return new(ReportReviewSnapshot.Key(saved),Array.AsReadOnly(new[]{saved.Markdown}),true);
     }
     void RefreshReview()
     {
@@ -42,6 +51,6 @@ public sealed partial class MainWindow
         token.ThrowIfCancellationRequested();EnforceRetention();
         if(review?.Fingerprint!=preview.Fingerprint)throw new SafetyException("当前报告或证据已改变，请重新预览后核实。");
         var saved=store.Reviews.Decide(state,preview,index,resolved,true);
-        ApplyReview(saved);StatusText.Text=resolved?"人工核实已加密保存，重开同一报告可恢复；仅适用于这些原文修订。":"人工确认已撤销并保存，恢复原报告的待核实状态。";
+        ApplyReview(saved);StatusText.Text=resolved?"人工核实已加密保存，重开同一报告可恢复；仅适用于这些原文修订。":"人工确认已撤销并保存，恢复原报告的模型状态。";
     }
 }

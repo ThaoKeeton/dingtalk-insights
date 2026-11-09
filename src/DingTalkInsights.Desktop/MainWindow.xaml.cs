@@ -92,7 +92,7 @@ public sealed partial class MainWindow:Window
     void BuildPages()
     {
         var monitor=Panel();
-        monitor.Children.Add(Card("持续发现待核实事项",Label("在选定身份和会话内按时间增量读取。完整批次才推进断点，重叠两分钟去重。可明确选择关闭到托盘，以及下次手动打开时恢复同一配置；默认均关闭。电脑休眠、注销或应用退出期间不实时采集，恢复后从原断点有界追赶。")));
+        monitor.Children.Add(Card("持续发现沟通事项",Label("在选定身份和会话内按时间增量读取。完整批次才推进断点，重叠两分钟去重。可明确选择关闭到托盘，以及下次手动打开时恢复同一配置；默认均关闭。电脑休眠、注销或应用退出期间不实时采集，恢复后从原断点有界追赶。")));
         monitor.Children.Add(Card("监控范围",Stack(since,interval,enableAi,closeToTray,saveRecovery)));
         startButton=Action("开始持续检查","start-monitor",StartMonitoringAsync);
         stopButton=new Button{Content="停止",IsEnabled=false};AutomationProperties.SetAutomationId(stopButton,"stop-monitor");stopButton.Click+=async(_,_)=>await StopFromHostAsync();
@@ -108,8 +108,8 @@ public sealed partial class MainWindow:Window
         ask.Children.Add(Row(Action("搜索本机索引","search-local",SearchLocalAsync),Action("通过 DWS 搜索","search-dws",SearchDwsAsync),Action("整理当前候选","analyze-candidates",AnalyzeCandidatesAsync)));
         ask.Children.Add(candidateBox);pages["ask"]=Scroll(ask);
 
-        var results=Panel();results.Children.Add(Card("带来源的整理结果",Label("结论均为待核实候选。原文只以文本显示，正文中的命令与链接不会执行。发送前请核对接收群、正文、范围和不完整提示。")));
-        results.Children.Add(Label("人工核实与撤销加密保存在本机，重开同一报告可恢复。确认仅适用于该报告引用的原文修订；证据变化或过期后失效。旧版纯文本历史仍可查看与导出。"));
+        var results=Panel();results.Children.Add(Card("带来源的整理结果",Label("结果展示模型对来源的判断，可直接查看和导出；人工核实为可选操作。原文只以文本显示，正文中的命令与链接不会执行。发送前请核对接收群、正文、范围和不完整提示。")));
+        results.Children.Add(Label("人工核实是可选操作，确认与撤销加密保存在本机，重开同一报告可恢复。确认仅适用于该报告引用的原文修订；证据变化或过期后失效。旧版纯文本历史仍可查看与导出。"));
         results.Children.Add(history);results.Children.Add(reportBox);results.Children.Add(issuePicker);
         results.Children.Add(Row(Action("复核证据并确认解决","confirm-resolved",ConfirmResolvedAsync),Action("撤销当前人工确认","reopen-resolved",ReopenResolvedAsync)));
         results.Children.Add(Row(Action("导出 Markdown…","export-report",ExportAsync,reviewRecovery:true),Action("预览并发送一次…","preview-send",SendAsync)));
@@ -123,7 +123,7 @@ public sealed partial class MainWindow:Window
         settingsPage=Scroll(settings);pages["settings"]=settingsPage;
         var help=Panel();help.Children.Add(Card("接入条件",Label("1. 独立安装官方 DWS，并在自己的电脑完成 dws auth login。企业未开通 CLI 时仍需管理员授权。\n2. 用 dws profile list 核对 corpId:userId；把明确身份与会话 ID 配置到本应用。\n3. 首先用一个会话与短时间范围核对消息数、时间和内容。\n4. 确认公司政策允许后，再配置新应用专用 OpenAI 密钥并开启上传。开发测试无需真实密钥。")));
         help.Children.Add(Card("首版的范围",Label("支持登录用户会话中的托盘持续检查和明确选择的启动后恢复、本机加密消息索引、断点追赶、关键词搜索、候选整理、人工核实、导出与手动 Webhook。\n关闭到托盘和重启恢复分别明确授权；通知区域失效时保持或恢复窗口。应用必须由已登录用户手动打开。暂不提供 Windows 服务、开机自启动、实时事件订阅、自动更新或附件正文解析。轮询可能漏掉查询窗口外的编辑、撤回或平台不可见历史；这类内容必须回钉钉核实。\n缺页、解析失败和授权失败暂停。仅明确可重试的 DWS 故障有界退避；预算耗尽时保留候选并继续采集，模型等下个 UTC 日；未知模型结果保留费用与尝试并暂停 AI，不跨过未知缺口。单次读取最多 1000 条，密集会话请缩小起始范围。\n消息默认保留 30 天，最大 50000 条；加密状态上限 32 MiB。超限会暂停，不静默丢弃。最近保留 100 份结果。\nWebhook 超时会标为结果不确定，先检查钉钉再决定重试。")));
-        help.Children.Add(Card("本机数据位置",Label(dataRoot+"\nstate.dpapi：消息、断点、尝试记录、费用预留和结果。\ncredentials.dpapi：本应用凭据。\nsend-attempts.dpapi：仅保存发送目标与正文摘要及尝试状态，不自动重发。\nreport-reviews.dpapi：证据快照与人工核实/撤销，备份交接时保留。\nanalysis-attempts.dpapi：按事项与来源修订去重，备份交接时保留。\nsettings.json：不含密钥的普通设置。\nWindows DPAPI 仅保护静态文件；同一 Windows 用户下的恶意进程不在本应用隔离能力内。")));
+        help.Children.Add(Card("本机数据位置",Label(dataRoot+"\nstate.dpapi：消息、断点、尝试记录、费用预留和结果。\ncredentials.dpapi：本应用凭据。\nsend-attempts.dpapi：仅保存发送目标、正文与报告身份摘要及尝试状态，不自动重发。\nreport-reviews.dpapi：证据快照与人工核实/撤销，备份交接时保留。\nanalysis-attempts.dpapi：按事项与来源修订去重，备份交接时保留。\nsettings.json：不含密钥的普通设置。\nWindows DPAPI 仅保护静态文件；同一 Windows 用户下的恶意进程不在本应用隔离能力内。")));
         pages["help"]=Scroll(help);
     }
 
@@ -250,7 +250,7 @@ public sealed partial class MainWindow:Window
             if(!batch.IsDemo){key=vault.Read().OpenAiKey;if(string.IsNullOrWhiteSpace(key))throw new SafetyException("请先在设置中配置本应用的专用 OpenAI 密钥。");}
         }
         var result=await engine.AnalyzeOnceAsync(batch,task,model,Analyzer(batch.IsDemo,key,model),DateTimeOffset.UtcNow,token,reuseConfirmed:reuse);
-        var archived=SetReport(result.Report);Navigate("results");StatusText.Text=archived?"整理完成，候选结论与证据请逐项核实。":ReviewStorageNotice;
+        var archived=SetReport(result.Report);Navigate("results");StatusText.Text=archived?"整理完成，已显示模型判断与来源；人工核实可选。":ReviewStorageNotice;
     }
     Func<MessageBatch,string,CancellationToken,Task<ModelResult>> Analyzer(bool demo,string key,ModelSettings model)=>
         demo?(b,t,_)=>Task.FromResult(new ModelResult(Demo.Analyze(b,t),0,0)):
@@ -280,7 +280,7 @@ public sealed partial class MainWindow:Window
             EnforceRetention(allowReviewReadOnly:true);
             if(!state.Reports.Contains(item.Report)){RefreshHistory();return;}
             ApplyReview(store.ReviewsAvailable?store.Reviews.OpenReadable(state,item.Report):ReportReviewView.Legacy(item.Report,unavailable:true));
-            StatusText.Text=review!.Unavailable?"核实文件暂不可用，已保留原文件并仅载入原始报告文本；可检查存储或明确清理索引。":review.Report is null?"旧历史仅保留原 Markdown，没有可持久核实的证据快照。":review.CanReview?"已载入历史及本机人工核实记录。":"证据已修订或缺失，原人工核实记录已失效。";
+            StatusText.Text=review!.AmbiguousIdentity?"报告身份或旧版核实状态无法安全区分，已载入原始文本。":review.Unavailable?"核实文件暂不可用，已保留原文件并仅载入原始报告文本；可检查存储或明确清理索引。":review.Report is null?"旧历史仅保留原 Markdown，没有可持久核实的证据快照。":review.CanReview?"已载入历史及本机人工核实记录。":"证据已修订或缺失，原人工核实记录已失效。";
         }
         catch(Exception e)
         {
@@ -300,15 +300,15 @@ public sealed partial class MainWindow:Window
     {
         if(markdown.Length==0)throw new SafetyException("还没有可发送的结果。");var content=markdown;
         if(displayedDemo){await Confirm("模拟发送预览（不会发到真实群）",content,"完成模拟预览");StatusText.Text="模拟预览结束，未请求 Webhook。";return;}
-        var credential=vault.Read();var target=new WebhookTarget(webhookName.Text.Trim(),credential.WebhookUrl,credential.WebhookSecret);target.Validate();
+        var identity=CurrentSendIdentity();var credential=vault.Read();var target=new WebhookTarget(webhookName.Text.Trim(),credential.WebhookUrl,credential.WebhookSecret);target.Validate();
         if(!await Confirm("向选定钉钉群发送一次",$"接收群：{target.Name}\n目标指纹：{Guard.Hash(target.Url)[..12]}\n\n{content}","确认发送这一份内容"))return;
-        EnforceRetention();if(markdown.Length==0||markdown!=content)throw new SafetyException("结果已过期或改变，请重新预览；本次未发送。");
-        var delivery=await sender.SendAsync(target,content,confirmed:true,cancellation:ActiveToken);
+        EnforceRetention();if(markdown.Length==0||markdown!=content||!identity.SameAs(CurrentSendIdentity()))throw new SafetyException("结果已过期或改变，请重新预览；本次未发送。");
+        var delivery=await sender.SendAsync(target,content,confirmed:true,cancellation:ActiveToken,report:identity);
         if(delivery.Suppressed)
         {
-            if(!await Confirm("已有发送尝试 · 人工重发可能重复送达",$"同一目标与正文已有记录：{delivery.Status}。请先回钉钉核对。即使结果不确定，也可能已经收到。\n接收群：{target.Name}\n目标指纹：{Guard.Hash(target.Url)[..12]}\n\n{content}","已人工核对，仍确认重发这一份")){StatusText.Text="已有发送记录，本次未重发。";return;}
-            EnforceRetention();if(markdown.Length==0||markdown!=content)throw new SafetyException("结果已过期或改变，请重新预览；本次未重发。");
-            delivery=await sender.SendAsync(target,content,confirmed:true,humanConfirmedRetry:true,cancellation:ActiveToken);
+            if(!await Confirm("可能重复送达 · 独立人工确认",$"同一目标与报告或正文可能已有发送尝试：{delivery.Status}。旧版的其他报告格式未必可完整核对。请先回钉钉检查；即使结果不确定，也可能已经收到。\n接收群：{target.Name}\n目标指纹：{Guard.Hash(target.Url)[..12]}\n\n{content}","已人工核对，仍确认发送这一份")){StatusText.Text="已有或可能存在发送记录，本次未发送。";return;}
+            EnforceRetention();if(markdown.Length==0||markdown!=content||!identity.SameAs(CurrentSendIdentity()))throw new SafetyException("结果已过期或改变，请重新预览；本次未发送。");
+            delivery=await sender.SendAsync(target,content,confirmed:true,humanConfirmedRetry:true,cancellation:ActiveToken,report:identity);
         }
         var status=delivery.Status;
         StatusText.Text=status switch{DeliveryStatus.Sent=>"钉钉已确认接收本次消息。",DeliveryStatus.Failed=>"钉钉未确认接收，请核对机器人设置；未自动重试。",_=>"发送结果不确定。请先到钉钉检查是否收到，未自动重试。"};

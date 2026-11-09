@@ -1,5 +1,6 @@
 using DingTalkInsights.Core;
 using DingTalkInsights.Runtime;
+using System.Text.Json;
 
 internal static class ReviewControllerTests
 {
@@ -7,6 +8,71 @@ internal static class ReviewControllerTests
     static void Run(Func<Task> action)=>action().WaitAsync(TimeSpan.FromSeconds(15)).GetAwaiter().GetResult();
     public static IEnumerable<(string,Action)> All()
     {
+        yield return ("unsaved assessment snapshot stays source-unknown after a later source revision",()=>Run(async()=>
+        {
+            using var f=new RuntimeTests.Fixture();var c=f.Controller;await c.ConnectAsync(f.CanonicalRoot,true);
+            await c.ReadOnceAsync(c.PreviewMonitoring(f.Request),true);await c.UseCredentialsAsync(CredentialLocation.ConnectedStore,CredentialUse.Model,true);
+            f.Services.Analyze=(batch,task,_)=>
+            {
+                var raw=JsonSerializer.Serialize(new{issues=new[]{new{title="Synthetic",summary="Synthetic summary",status="resolved",communication="",nextStep="",evidence=new[]{new{messageId=batch.Messages[0].MessageId,quote=batch.Messages[0].Text}}}},pendingQuestions=Array.Empty<string>()});
+                f.Cipher.FailReviewArchive=true;return Task.FromResult(new ModelResult(AnalysisValidator.Validate(raw,batch,task),1,1));
+            };
+            Check(await c.AnalyzeCandidatesAsync((await c.PreviewAnalysisAsync(new()))!,true),"synthetic analysis failed");
+            Check(c.Snapshot.Markdown.Contains("来源状态未明")&&!c.Snapshot.Markdown.Contains("模型输入与本机已保存的来源版本一致"),"failed snapshot claimed current sources");
+            f.Cipher.FailReviewArchive=false;
+            f.Services.Read=(scope,_)=>{var batch=RuntimeTests.FakeServices.Batch(scope);return Task.FromResult(batch with{Messages=[batch.Messages[0] with{Text="Synthetic revised body"}]});};
+            await c.ReadOnceAsync(c.PreviewMonitoring(f.Request),true);
+            Check(c.Snapshot.Markdown.Contains("来源状态未明")&&!c.Snapshot.Markdown.Contains("模型输入与本机已保存的来源版本一致")&&f.Services.Models==1&&f.Services.Sends==0,"revised source revived an unsaved current assessment");
+            await c.UseCredentialsAsync(CredentialLocation.ConnectedStore,CredentialUse.Webhook,true);
+            var preview=await c.PreviewSendAsync("Synthetic room");
+            Check(preview is not null&&preview.LegacyFormatRisk&&preview.AlreadyAttempted&&f.Services.Sends==0,"unsaved snapshot bypassed the historical-format send risk gate");
+        }));
+        yield return ("legacy unknown send cannot replay after the same report gets a new display format",()=>Run(async()=>
+        {
+            using var f=new RuntimeTests.Fixture();var c=f.Controller;await c.ConnectAsync(f.CanonicalRoot,true);
+            await c.ReadOnceAsync(c.PreviewMonitoring(f.Request),true);await c.UseCredentialsAsync(CredentialLocation.ConnectedStore,CredentialUse.Model,true);
+            await c.AnalyzeCandidatesAsync((await c.PreviewAnalysisAsync(new()))!,true);var saved=c.Snapshot.History.Single();await c.DisconnectAsync();
+            var calls=0;using(var legacy=new BusinessStore(f.CanonicalRoot,f.Cipher,new FixedTime(RuntimeTests.Now)))
+            {
+                var target=new WebhookTarget("Synthetic room",f.Vault.Read().WebhookUrl,"");
+                var sender=new DurableWebhookSender(legacy.SendAttempts,(_,_,_)=>{calls++;return Task.FromResult(DeliveryStatus.Unknown);});
+                Check((await sender.SendAsync(target,saved.Markdown,true)).Status==DeliveryStatus.Unknown&&calls==1,"fixture did not record a legacy unknown send");
+            }
+            await c.ConnectAsync(f.CanonicalRoot,true);await c.UseCredentialsAsync(CredentialLocation.ConnectedStore,CredentialUse.Webhook,true);await c.SelectHistoryAsync(saved);
+            var preview=await c.PreviewSendAsync("Synthetic room");
+            Check(preview is not null&&preview.AlreadyAttempted&&preview.PreviousStatus==DeliveryStatus.Unknown,"legacy unknown send was hidden by new report formatting");
+            Check(!await c.SendReportAsync(preview!,true)&&f.Services.Sends==0,"legacy unknown send replayed without separate approval");
+            preview=await c.PreviewSendAsync("Synthetic room");Check(await c.SendReportAsync(preview!,true,true)&&f.Services.Sends==1,"explicit local-fake retry did not dispatch once");
+        }));
+        yield return ("human decision history requires a distinct legacy-send acknowledgement even without a matching payload",()=>Run(async()=>
+        {
+            using var f=new RuntimeTests.Fixture();var c=f.Controller;await c.ConnectAsync(f.CanonicalRoot,true);
+            await c.ReadOnceAsync(c.PreviewMonitoring(f.Request),true);await c.UseCredentialsAsync(CredentialLocation.ConnectedStore,CredentialUse.Model|CredentialUse.Webhook,true);
+            f.Services.Analyze=(batch,task,_)=>
+            {
+                var raw=JsonSerializer.Serialize(new{issues=new[]{new{title="Synthetic",summary="Synthetic",status="resolved",communication="",nextStep="",evidence=new[]{new{messageId=batch.Messages[0].MessageId,quote=batch.Messages[0].Text}}}},pendingQuestions=Array.Empty<string>()});
+                return Task.FromResult(new ModelResult(AnalysisValidator.Validate(raw,batch,task),1,1));
+            };
+            await c.AnalyzeCandidatesAsync((await c.PreviewAnalysisAsync(new()))!,true);
+            await c.ConfirmResolvedAsync((await c.PreviewResolutionAsync(0,true))!,true);
+            await c.ConfirmResolvedAsync((await c.PreviewResolutionAsync(0,false))!,true);
+            var preview=(await c.PreviewSendAsync("Synthetic room"))!;
+            Check(preview.LegacyFormatRisk&&preview.AlreadyAttempted&&preview.PreviousStatus is null,"prior human rendering was assumed never sent");
+            Check(!await c.SendReportAsync(preview,true)&&f.Services.Sends==0,"missing old payload bypassed the risk acknowledgement");
+            preview=(await c.PreviewSendAsync("Synthetic room"))!;
+            Check(await c.SendReportAsync(preview,true,true)&&f.Services.Sends==1,"confirmed local fake did not dispatch once");
+        }));
+        yield return ("routine demo analysis shows model assessment without human review and survives handover",()=>Run(async()=>
+        {
+            using var f=new RuntimeTests.Fixture();var c=f.Controller;await c.OpenDemoAsync();await c.ReadOnceAsync(c.PreviewMonitoring(f.DemoRequest),true);
+            Check(await c.AnalyzeCandidatesAsync((await c.PreviewAnalysisAsync(new()))!,true),"demo analysis failed");
+            Check(c.Snapshot.Markdown.Contains("模型判断已解决")&&!c.Snapshot.Markdown.Contains("人工确认已解决")&&c.Snapshot.Requests==0&&f.Services.Sends==0,"routine result required review or dispatched a real service");
+            var saved=c.Snapshot.History.Single();await c.SelectHistoryAsync(saved);
+            Check(c.Snapshot.Markdown.Contains("模型判断已解决")&&!c.Snapshot.Markdown.Contains("人工确认已解决"),"history lost the model assessment");
+            await c.DeactivateAsync();using var standalone=new BusinessStore(Path.Combine(f.PluginRoot,"demo"),f.Cipher,new FixedTime(RuntimeTests.Now));var state=standalone.Load();
+            var view=standalone.Reviews.Open(state,state.Reports.Single());
+            Check(view.Markdown.Contains("模型判断已解决")&&!view.Report!.Issues.Any(i=>i.HumanConfirmed),"standalone handover fabricated or lost the assessment");
+        }));
         yield return ("review controller saves explicit decisions and a new plugin/standalone owner restores them",()=>Run(async()=>
         {
             using var f=new RuntimeTests.Fixture();var c=f.Controller;await c.OpenDemoAsync();await c.ReadOnceAsync(c.PreviewMonitoring(f.DemoRequest),true);

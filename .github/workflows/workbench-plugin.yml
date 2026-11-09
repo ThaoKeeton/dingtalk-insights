@@ -1,7 +1,7 @@
 name: Workbench native plugin acceptance
 on:
   push:
-    branches: [main, 'codex/workbench-plugin', 'codex/durable-review', 'codex/task-aware-analysis']
+    branches: [main, 'codex/workbench-plugin', 'codex/durable-review', 'codex/task-aware-analysis', 'codex/routine-assessment']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -13,6 +13,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: |
@@ -37,6 +39,8 @@ jobs:
       - name: net8 to net10 persisted-state and native DPAPI interoperability
         shell: pwsh
         run: ./scripts/test-workbench-interop.ps1
+      - name: Actual previous-version assessment and DPAPI rollback
+        run: python scripts/test-assessment-rollback.py --report artifacts/workbench-plugin/assessment-rollback/result.json
       - name: Actual install trust navigation settings demo monitor disable exit restart offline removal and extracted ZIP
         shell: pwsh
         run: ./scripts/test-workbench-plugin-native.ps1 -BuildDirectory artifacts/workbench-plugin -TimeoutSeconds 180
@@ -56,3 +60,4 @@ jobs:
             artifacts/workbench-plugin/*.json
             artifacts/workbench-plugin/evidence/
             artifacts/workbench-plugin/interop-evidence/
+            artifacts/workbench-plugin/assessment-rollback/

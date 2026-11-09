@@ -22,9 +22,12 @@ if(args[0]=="write")
 {
     var state=store.Load();state.Ingest(batch);AnalysisAttemptPolicy.Record(state,batch,task);state.Reserve(model,0.01m,now);store.Save(state);
     state.Reports.Add(new(now,scope.Key,task,ReportRenderer.Markdown(report),false,message.CreatedAt));store.Save(state);
-    store.Reviews.Decide(state,store.Reviews.Capture(state,report),0,true,true);
+    var initial=store.Reviews.Capture(state,report);
+    if(!initial.Markdown.Contains("模型判断已解决")||initial.Report?.Issues[0].ModelReportedResolved!=true)throw new Exception("Initial model assessment was lost.");
+    store.Reviews.Decide(state,initial,0,true,true);
     var destination=Guard.Hash("synthetic-destination");var payload=Guard.Hash("synthetic-payload");var ledger=new SendLedger();
-    ledger.Attempts[Guard.Hash(destination+"\n"+payload)]=new(destination,payload,now,SendAttemptStatus.Pending,1);store.SendAttempts.Save(ledger);
+    ledger.Attempts[Guard.Hash(destination+"\n"+payload)]=new(destination,payload,now,SendAttemptStatus.Pending,1);
+    var reportKey=ReportReviewSnapshot.Key(state.Reports.Single());ledger.Attempts[Guard.Hash(destination+"\nreport:"+reportKey)]=new(destination,Guard.Hash("report:"+reportKey),now,SendAttemptStatus.Pending,1);store.SendAttempts.Save(ledger);
     File.WriteAllText(Path.Combine(root,args[2]+"-facts.json"),JsonSerializer.Serialize(expectedFacts));
 }
 else if(args[0]=="read")
@@ -40,13 +43,16 @@ else if(args[0]=="read")
     var result=await new MonitorEngine(state,store).TickAsync(scope,(s,ct)=>Task.FromResult(batch with{Scope=s}),
         (b,t,ct)=>{calls++;throw new Exception("Duplicate paid dispatch");},model,state.RetentionDays,scope.End);
     if(calls!=0||state.Requests!=1||state.ReservedUsd!=0.01m)throw new Exception("Runtime change replayed attempted source.");
-    if(store.SendAttempts.Load().Attempts.Single().Value.Status!=SendAttemptStatus.Pending)throw new Exception("Uncertain durable send attempt changed.");
+    var sends=store.SendAttempts.Load();var destination=Guard.Hash("synthetic-destination");var payload=Guard.Hash("synthetic-payload");var reportKey=ReportReviewSnapshot.Key(state.Reports.Single());
+    if(!sends.Attempts.TryGetValue(Guard.Hash(destination+"\n"+payload),out var originalSend)||originalSend.Status!=SendAttemptStatus.Pending||
+        !sends.Attempts.TryGetValue(Guard.Hash(destination+"\nreport:"+reportKey),out var reportSend)||reportSend.Status!=SendAttemptStatus.Pending)throw new Exception("Uncertain durable send or report alias changed.");
     var review=store.Reviews.Open(state,state.Reports.Single());
-    if(!review.CanReview||review.Report?.Issues[0].HumanConfirmed!=true)throw new Exception("Cross-runtime human verification lost.");
+    if(!review.CanReview||review.Report?.Issues[0].HumanConfirmed!=true||!review.Report.Issues[0].ModelReportedResolved||
+        !review.Markdown.Contains("模型输入与本机已保存的来源版本一致"))throw new Exception("Cross-runtime model status, source revisions or human verification lost.");
     if(Environment.Version.Major>=10)
     {
         var revoked=store.Reviews.Decide(state,review,0,false,true);
-        if(revoked.Report!.Issues[0].HumanConfirmed)throw new Exception("Cross-runtime revoke did not restore tentative state.");
+        if(revoked.Report!.Issues[0].HumanConfirmed||!revoked.Markdown.Contains("模型判断已解决"))throw new Exception("Cross-runtime revoke did not restore model assessment.");
         store.Reviews.Decide(state,revoked,0,true,true);
     }
     Console.WriteLine($"PASS {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription} {args[2]}: persisted task-scoped attempts/UTC budget, human confirm/revoke/restore and no duplicate analysis");

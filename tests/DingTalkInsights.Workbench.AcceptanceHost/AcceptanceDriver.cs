@@ -95,14 +95,14 @@ internal static partial class AcceptanceDriver
             await WaitActionRendered(plugin,"DTI 读取一次",()=>Observation(plugin).GetProperty("Candidates").GetInt32()==4
                 &&Find<TextBox>(page,"DTI 来源候选").Text.Contains("demo-2"),"Real demo Core read did not populate/render native candidates.");
             Require(Find<TextBox>(page,"DTI 来源候选").Text.Contains("demo-2"),"Native source evidence not rendered.");
-            Find<TextBox>(page,"DTI 搜索词").Text="修复";await ConfirmAction(window,page,"DTI 搜索",true);
+            Find<TextBox>(page,"DTI 搜索词").Text="修复 验收";await ConfirmAction(window,page,"DTI 搜索",true);
             await Wait(()=>Observation(plugin).GetProperty("Candidates").GetInt32()>0&&Resources(plugin).GetProperty("PendingOperations").GetInt32()==0,"Local native search did not finish.");
             await ConfirmAction(window,page,"DTI 整理候选",true);
             await WaitActionRendered(plugin,"DTI 整理候选",()=>Observation(plugin).GetProperty("ReportCharacters").GetInt32()>0
-                &&Find<TextBox>(page,"DTI 待核实结果").Text.Contains("待核实")&&Find<ComboBox>(page,"DTI 历史结果").Items.Count>0,"Real demo model validation/rendering failed.");
-            Require(Find<TextBox>(page,"DTI 待核实结果").Text.Contains("待核实"),"Tentative evidence result missing.");
+                &&Find<TextBox>(page,"DTI 待核实结果").Text.Contains("模型判断已解决")&&Find<ComboBox>(page,"DTI 历史结果").Items.Count>0,"Real demo model assessment/rendering failed.");
+            Require(!Find<TextBox>(page,"DTI 待核实结果").Text.Contains("人工确认已解决"),"Model assessment became a human decision.");
             Require(Find<ComboBox>(page,"DTI 历史结果").Items.Count>0,"Real Core history not displayed.");
-            Record("Real native read cancel/confirm, Core demo collection/local search/evidence-backed analysis/history; no network model/sender");
+            Record("Real native read cancel/confirm, Core demo local search and evidence-backed model assessment without human review; no network model/sender");
             await ConfirmAction(window,page,"DTI 人工确认解决",false);
             await WaitActionRendered(plugin,"DTI 人工确认解决",()=>!Find<TextBox>(page,"DTI 待核实结果").Text.Contains("人工确认已解决"),"Cancelled human review changed certainty.");
             await ConfirmAction(window,page,"DTI 人工确认解决",true);

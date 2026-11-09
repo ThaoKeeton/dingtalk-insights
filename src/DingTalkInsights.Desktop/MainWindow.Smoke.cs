@@ -28,6 +28,7 @@ public sealed partial class MainWindow
             {
                 Check(history.Items.Count>0&&currentReport is not null&&review?.CanReview==true&&markdown.Contains("demo-2"),"restart-history-ready-without-model");
                 Check(markdown.Contains("人工确认已解决")&&currentReport!.Issues[0].HumanConfirmed,"restart-durable-human-confirmation-no-new-model");
+                Check(markdown.Contains("模型判断已解决")&&!currentReport!.Issues[1].HumanConfirmed,"restart-model-assessment-without-human-review");
                 Check(!state.Messages.Values.Any(m=>m.Message.MessageId=="expired-smoke-message")&&!state.Reports.Any(r=>r.Task=="EXPIRED_SMOKE_REPORT"),"restart-retention-before-use");
                 Check(state.Receipts.Any(r=>!r.Complete&&r.Ledger.ContainsKey("syntheticLimit"))&&!monitorSummary.Text.Contains("SYNTHETIC_LIMIT"),"restart-collection-limitations-safe-summary");
                 File.WriteAllText(Path.Combine(output,"restored-report.md"),markdown);
@@ -54,6 +55,7 @@ public sealed partial class MainWindow
             await CaptureAsync("search.png");
             await InvokeAsync("analyze-candidates");
             Check(currentReport?.Issues.Count==2&&reportBox.Text.Contains("demo-2"),"native-analyze-evidence");
+            Check(reportBox.Text.Contains("模型判断已解决")&&!reportBox.Text.Contains("人工确认已解决")&&currentReport!.Issues.All(i=>!i.HumanConfirmed),"native-model-assessment-without-human-review");
             Check(currentReport!.Issues.All(i=>i.Status==IssueStatus.PendingVerification),"no-automatic-resolution");
             Check(state.ReservedUsd==0&&state.Requests==0,"demo-no-api-spend");
             var originalReports=state.Reports.Count;taskText.Text="Synthetic native distinct topic B";Navigate("ask");

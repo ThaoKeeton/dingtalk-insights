@@ -90,6 +90,7 @@ public sealed class InsightState
     public bool TaskAttemptSidecarRequired {get;set;}
     [System.Text.Json.Serialization.JsonIgnore] public bool AnalysisAttemptsAvailable {get;set;}=true;
     public List<SavedReport> Reports {get;set;}=[];
+    [System.Text.Json.Serialization.JsonIgnore] public HashSet<string> AmbiguousReports {get;set;}=[];
     public Dictionary<string,AttemptSource> AttemptSources {get;set;}=[];
     public DateTimeOffset? LegacyAttemptsExpireAt {get;set;}
     public MonitoringOrigin? Monitoring {get;set;}

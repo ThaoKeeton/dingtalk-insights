@@ -176,7 +176,7 @@ public sealed partial class InsightController
             var result=await new MonitorEngine(state,OwnedStore(operation.Generation)).AnalyzeOnceAsync(batch,preview.Task,model,
                 (selected,text,token)=>AnalyzePrepared(selected,text,model,credential,revision,operation.Generation,token,()=>
                 {try{RequireCurrentAuthority(preview.Authority,operation);}catch(RuntimeFault){throw new MonitoringFault(MonitorFailure.Configuration);}}),clock.UtcNow,operation.Token,()=>clock.UtcNow,reuseConfirmed);
-            Commit(operation,()=>{if(SetReport(result.Report))notice="已生成带来源的待核实结果；请回原会话核对。";});return true;
+            Commit(operation,()=>{if(SetReport(result.Report))notice="已生成带来源的模型整理结果；人工核实可选。";});return true;
         },RuntimeFailure.Model,cancellation);
     }
     public Task<bool> SelectHistoryAsync(SavedReport selected,CancellationToken cancellation=default)=>Run(operation=>
@@ -187,7 +187,7 @@ public sealed partial class InsightController
             if(!state.Reports.Contains(selected))throw new RuntimeFault(RuntimeFailure.Retention);
             previews.Clear();review=null;report=null;markdown="";reportOldest=null;
             ApplyReview(store!.ReviewsAvailable?store.Reviews.OpenReadable(state,selected):ReportReviewView.Legacy(selected,unavailable:true));
-            notice=review!.Unavailable?"核实文件暂不可用，已保留原文件并仅载入原始报告文本；可检查存储或明确清理索引。":review.Report is null?"旧历史仅保留原 Markdown，可查看和导出；没有可持久核实的证据快照。":review.CanReview?"已载入历史及本机人工核实记录。":"证据已修订或缺失，原人工核实记录已失效。";
+            notice=review!.AmbiguousIdentity?"报告身份或旧版核实状态无法安全区分，已载入原始文本。":review.Unavailable?"核实文件暂不可用，已保留原文件并仅载入原始报告文本；可检查存储或明确清理索引。":review.Report is null?"旧历史仅保留原 Markdown，可查看和导出；没有可持久核实的证据快照。":review.CanReview?"已载入历史及本机人工核实记录。":"证据已修订或缺失，原人工核实记录已失效。";
         });return Task.FromResult(true);
     },RuntimeFailure.Storage,cancellation,readOnly:true);
     public async Task<bool> ConfirmResolvedAsync(int index,bool evidenceReviewed,CancellationToken cancellation=default)
@@ -206,7 +206,7 @@ public sealed partial class InsightController
                 RequireStore();Consume(preview.Authority,operation);RefreshReview();
                 if(review?.Fingerprint!=preview.View.Fingerprint)throw new RuntimeFault(RuntimeFailure.Configuration);
                 var saved=store!.Reviews.Decide(state,preview.View,preview.Index,preview.Resolved,true);
-                ApplyReview(saved);previews.Clear();notice=preview.Resolved?"人工核实已加密保存，重开此报告可恢复；仅适用于这些原文修订。":"人工确认已撤销并保存，恢复原报告的待核实状态。";
+                ApplyReview(saved);previews.Clear();notice=preview.Resolved?"人工核实已加密保存，重开此报告可恢复；仅适用于这些原文修订。":"人工确认已撤销并保存，恢复原报告的模型状态。";
             });return Task.FromResult(true);
         },RuntimeFailure.Storage,cancellation);
     }
@@ -218,22 +218,24 @@ public sealed partial class InsightController
             Commit(operation,()=>
             {
                 Consume(preview.Authority,operation);
-                if(markdown!=preview.Markdown)throw new RuntimeFault(RuntimeFailure.Configuration);
+                if(markdown!=preview.Markdown||!preview.Identity.SameAs(CurrentSendIdentity()))throw new RuntimeFault(RuntimeFailure.Configuration);
                 RequireSendableReport();
             });
             var content=preview.Markdown;var credential=await PrivateCredentialsAsync(CredentialUse.Webhook,operation.Generation,operation.Token);
             var revision=await CredentialRevisionAsync(CredentialUse.Webhook,operation.Generation,operation.Token);
-            Commit(operation,()=>{RequireCurrentAuthority(preview.Authority,operation);EnforceRetention();RequireSendableReport();if(markdown!=content)throw new RuntimeFault(RuntimeFailure.Retention);});
+            Commit(operation,()=>{RequireCurrentAuthority(preview.Authority,operation);EnforceRetention();RequireSendableReport();if(markdown!=content||!preview.Identity.SameAs(CurrentSendIdentity()))throw new RuntimeFault(RuntimeFailure.Retention);});
             var target=new WebhookTarget(preview.DestinationName,credential.WebhookUrl,credential.WebhookSecret);
             if(WebhookClient.Fingerprint(target,content)!=preview.Fingerprint)throw new RuntimeFault(RuntimeFailure.Configuration);
             var sender=new DurableWebhookSender(store!.SendAttempts,(approved,text,token)=>Dispatch(operation.Generation,token,()=>
             {
                 RequireCurrentAuthority(preview.Authority,operation);EnforceRetention();RequireSendableReport();
-                if(markdown!=content||BoundCredentialRevision(CredentialUse.Webhook)!=revision)throw new RuntimeFault(RuntimeFailure.Credentials);
+                if(markdown!=content||!preview.Identity.SameAs(CurrentSendIdentity())||BoundCredentialRevision(CredentialUse.Webhook)!=revision)throw new RuntimeFault(RuntimeFailure.Credentials);
                 return services.SendAsync(approved,text,token);
             }),time);
-            var result=await sender.SendAsync(target,content,true,humanConfirmedRetry,operation.Token);
-            Commit(operation,()=>notice=result.Suppressed?"同一目标与正文已有发送尝试，未重发；请先核对接收群，人工重发可能重复送达。":result.Status switch
+            var result=await sender.SendAsync(target,content,true,humanConfirmedRetry,operation.Token,preview.Identity);
+            Commit(operation,()=>notice=result.Suppressed
+                ?(preview.LegacyFormatRisk&&preview.PreviousStatus is null?"旧格式或人工状态的发送记录无法完整核对，本次未发送；请先确认重复送达风险。":"同一目标与报告或正文已有发送尝试，未重发；请先核对接收群。")
+                :result.Status switch
             {
                 DeliveryStatus.Sent=>"钉钉已确认接收。再次人工重发可能重复送达。",
                 DeliveryStatus.Failed=>"钉钉未确认接收；尝试已保存，不自动重试。",

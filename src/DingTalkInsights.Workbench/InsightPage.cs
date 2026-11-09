@@ -46,7 +46,7 @@ internal sealed class InsightPage:UserControl
         Named(this,settings?"DTI 原生设置":"DTI 原生工作区");
         HorizontalContentAlignment=HorizontalAlignment.Stretch;Content=new ScrollViewer{HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,HorizontalContentAlignment=HorizontalAlignment.Stretch,Content=body};
         body.Children.Add(Text(settings?"钉钉沟通事项 · 设置":"钉钉沟通事项",26));
-        body.Children.Add(Text("默认模拟。安装、启用和导航不会读取聊天、使用凭据、调用模型或发送。所有候选结论须回原会话核实，不作人员评价。"));
+        body.Children.Add(Text("默认模拟。安装、启用和导航不会读取聊天、使用凭据、调用模型或发送。结果展示模型判断和来源；人工核实可选，不作人员评价。"));
         body.Children.Add(notice);body.Children.Add(health);
         Add(task);task.Text=controller.Snapshot.Draft;
         task.TextChanged+=(_,_)=>{if(!rendering&&loaded&&controller.Snapshot.Active)controller.SetDraft(task.Text);};
@@ -65,11 +65,12 @@ internal sealed class InsightPage:UserControl
     {
         Add(demo,upload);
         Add(Action("打开模拟本机库","DTI 打开模拟",async()=>{await Work(()=>controller.OpenDemoAsync());}));
-        body.Children.Add(Text("身份、会话、时间、DWS 路径与限额在插件设置中明确填写并保存。真实来源须先连接标准独立版账本，再按每次预览授权。"));
+        body.Children.Add(Text("身份、会话、时间、DWS 路径与限额在插件设置中明确填写并保存。真实来源须先连接标准独立版账本；单次读取和按需上传按预览授权，持续监控按已批准范围自动整理。"));
         Add(Action("读取一次…","DTI 读取一次",Read),Action("预览并开始监控…","DTI 开始监控",Begin,out begin),Action("停止并等待退役","DTI 停止监控",async()=>{await Work((session.Monitoring??throw new RuntimeFault(RuntimeFailure.Inactive)).StopAsync);},stop:true));
         Add(keywords,dwsSearch,Action("搜索…","DTI 搜索",Search));
+        report.Header="整理结果与模型判断";
         Add(candidates,Action("预览并整理候选…","DTI 整理候选",Analyze),report);
-        body.Children.Add(Text("人工核实及撤销加密保存到此报告，重开历史可恢复；原文修订或过期后失效。旧版纯文本历史可查看与复制。"));
+        body.Children.Add(Text("如需人工核实，可选的确认及撤销会加密保存到此报告，重开历史可恢复；原文修订或过期后失效。旧版纯文本历史可查看与复制。"));
         Add(issue,Action("复核证据并确认解决…","DTI 人工确认解决",()=>Resolve(true)),Action("撤销此项人工确认…","DTI 撤销人工确认",()=>Resolve(false)),Action("复制 Markdown","DTI 复制 Markdown",Copy));
         Add(history);history.SelectionChanged+=async(_,_)=>
         {if(!rendering&&history.SelectedItem is HistoryRow selected)await Safe(async()=>{await Work(()=>controller.SelectHistoryAsync(selected.Value));});};
@@ -191,23 +192,25 @@ internal sealed class InsightPage:UserControl
         var index=(int)issue.Value-1;
         var preview=await Work(()=>controller.PreviewResolutionAsync(index,resolved));if(preview is null)return;
         var evidence=string.Join("\n\n",preview.Evidence.Select(e=>$"{e.Message.MessageId} / {e.Message.CreatedAt:O}\n{e.Quote}"));
-        var instruction=resolved?"确认你已回原会话核对证据及解决结果；修复提交或有人回复不等于解决。":"撤销此报告该项人工确认，恢复原报告的待核实状态。本次不调用模型或修改其他报告。";
+        var instruction=resolved?"确认你已回原会话核对证据及解决结果；修复提交或有人回复不等于解决。":"撤销此报告该项人工确认，恢复原报告的模型状态。本次不调用模型或修改其他报告。";
         if(await Confirm(resolved?"复核原文证据":"撤销人工确认",$"问题 {preview.Index+1}：{preview.Title}\n{instruction}\n{evidence}"))
             await Work(()=>controller.ConfirmResolvedAsync(preview,true));
     }
     Task Copy()
     {
         var content=controller.Snapshot.Markdown;if(content.Length==0)throw new RuntimeFault(RuntimeFailure.Retention);
-        var data=new DataPackage();data.SetText(content);Clipboard.SetContent(data);ShowNotice("已复制当前有效结果；请在分享前复核证据与范围。");return Task.CompletedTask;
+        var data=new DataPackage();data.SetText(content);Clipboard.SetContent(data);ShowNotice("已复制当前整理结果与来源；请确认分享范围。");return Task.CompletedTask;
     }
     async Task Send()
     {
         var name=session.Draft.DestinationName;var preview=await Work(()=>controller.PreviewSendAsync(name));if(preview is null)return;
-        if(!await Confirm("人工发送精确预览",$"目标名称 {preview.DestinationName}\n目标指纹（遮罩） …{preview.DestinationFingerprint}\n已有尝试 {preview.Attempts} / {preview.PreviousStatus}\n精确正文：\n{preview.Markdown}"))return;
+        var prior=preview.PreviousStatus is null?"没有匹配的已知发送记录":$"已知尝试 {preview.Attempts} / {preview.PreviousStatus}";
+        if(preview.LegacyFormatRisk)prior+="；旧格式或历史人工状态无法完整核对";
+        if(!await Confirm("人工发送精确预览",$"目标名称 {preview.DestinationName}\n目标指纹（遮罩） …{preview.DestinationFingerprint}\n{prior}\n精确正文：\n{preview.Markdown}"))return;
         var retry=false;
         if(preview.AlreadyAttempted)
         {
-            retry=await Confirm("重复送达风险：独立人工重试确认","同一目标与正文已有发送尝试。请先到接收群核对；即使先前显示失败或未知，本次人工重试仍可能重复送达。明确确认后才尝试一次。","承担重复风险并重试一次");
+            retry=await Confirm("重复送达风险：独立人工重试确认",preview.LegacyFormatRisk?"此报告有旧版格式、历史人工状态或来源变化，无法完整核对所有先前发送格式；请先检查接收群。明确确认后才尝试一次。":"同一目标与报告或正文已有发送尝试。请先到接收群核对；即使先前显示失败或未知，本次人工重试仍可能重复送达。明确确认后才尝试一次。","承担重复风险并重试一次");
             if(!retry)return;
         }
         await Work(()=>controller.SendReportAsync(preview,true,retry));

@@ -261,7 +261,7 @@ try {
     if (Test-Path $extracted) { throw 'Extraction target already exists' }
     New-Item -ItemType Directory -Path $extracted | Out-Null
     Expand-Archive -LiteralPath "$build/DingTalkInsights.Workbench.AcceptanceHost-win-x64.zip" -DestinationPath "$extracted/host"
-    Expand-Archive -LiteralPath "$build/DingTalkInsights.Workbench-0.3.4-win-x64.zip" -DestinationPath "$extracted/package"
+    Expand-Archive -LiteralPath "$build/DingTalkInsights.Workbench-0.3.5-win-x64.zip" -DestinationPath "$extracted/package"
     if (-not (Test-Path -LiteralPath "$extracted/package/plugin.json")) { throw 'ZIP root does not contain plugin.json' }
     Run-Sequence "$extracted/host" "$extracted/package" 're-extracted'
     $final.succeeded = $true

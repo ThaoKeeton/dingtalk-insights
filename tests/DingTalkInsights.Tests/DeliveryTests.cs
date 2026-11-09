@@ -12,6 +12,43 @@ internal static class DeliveryTests
     static void Run(Func<Task> action)=>action().WaitAsync(TimeSpan.FromSeconds(15)).GetAwaiter().GetResult();
     public static IEnumerable<(string,Action)> All()
     {
+        yield return ("report send aliases preserve unknown legacy attempts and are atomic before a local fake transport",()=>Run(async()=>
+        {
+            using var temp=new RuntimeTemp();using var business=new BusinessStore(temp.Path,new SyntheticCipher(),new FixedTime(Now));var calls=0;
+            var sender=new DurableWebhookSender(business.SendAttempts,(_,_,_)=>{calls++;return Task.FromResult(DeliveryStatus.Unknown);});
+            var report=Guard.Hash("synthetic-report");var identity=new ReportSendIdentity(report,["Synthetic legacy rendering"],false);
+            CheckAttempt(await sender.SendAsync(Target,"Synthetic legacy rendering",true),true,false,1);
+            CheckAttempt(await sender.SendAsync(Target,"Synthetic new rendering",true,report:identity),false,true,1);
+            var approvingSender=new DurableWebhookSender(business.SendAttempts,(_,_,_)=>
+            {
+                calls++;var ledger=business.SendAttempts.Load();
+                Assert(ledger.Attempts[DurableWebhookSender.AttemptKey(Target,"Synthetic new rendering")].Status==SendAttemptStatus.Pending&&
+                    ledger.Attempts[DurableWebhookSender.ReportAttemptKey(Target,report)].Status==SendAttemptStatus.Pending,"report and payload were not persisted together before transport");
+                return Task.FromResult(DeliveryStatus.Unknown);
+            });
+            CheckAttempt(await approvingSender.SendAsync(Target,"Synthetic new rendering",true,true,report:identity),true,false,2);
+            CheckAttempt(await sender.SendAsync(Target,"Another synthetic rendering",true,report:identity),false,true,2);
+            var retryLedger=business.SendAttempts.Load();business.SendAttempts.Save(retryLedger);
+            Assert(business.SendAttempts.Load().Attempts.ContainsKey(DurableWebhookSender.ReportAttemptKey(Target,report)),"old-format ledger rewrite discarded report alias");
+            void CheckAttempt(SendResult result,bool dispatched,bool suppressed,int expectedCalls)=>Assert(result.Dispatched==dispatched&&result.Suppressed==suppressed&&calls==expectedCalls,"report alias did not prevent or permit the expected local fake send");
+        }));
+        yield return ("unverifiable historical report rendering requires separate retry approval",()=>Run(async()=>
+        {
+            using var temp=new RuntimeTemp();using var business=new BusinessStore(temp.Path,new SyntheticCipher(),new FixedTime(Now));var calls=0;
+            var sender=new DurableWebhookSender(business.SendAttempts,(_,_,_)=>{calls++;return Task.FromResult(DeliveryStatus.Sent);});
+            var identity=new ReportSendIdentity(Guard.Hash("synthetic-history"),["Synthetic old format"],true);
+            var refused=await sender.SendAsync(Target,"Synthetic new format",true,report:identity);
+            Assert(refused.Suppressed&&!refused.Dispatched&&calls==0,"unknown legacy format bypassed the independent risk gate");
+            Assert((await sender.SendAsync(Target,"Synthetic new format",true,true,report:identity)).Dispatched&&calls==1,"explicitly approved local fake did not dispatch once");
+        }));
+        yield return ("failed report alias persistence never reaches a local fake transport",()=>Run(async()=>
+        {
+            using var temp=new RuntimeTemp();var cipher=new SyntheticCipher();using var business=new BusinessStore(temp.Path,cipher,new FixedTime(Now));var calls=0;
+            var sender=new DurableWebhookSender(business.SendAttempts,(_,_,_)=>{calls++;return Task.FromResult(DeliveryStatus.Sent);});
+            var identity=new ReportSendIdentity(Guard.Hash("synthetic-report"),["Synthetic legacy"],false);cipher.FailProtect=true;
+            try{await sender.SendAsync(Target,"Synthetic current",true,report:identity);throw new Exception("uncommitted alias dispatched");}catch(MonitoringFault fault){Assert(fault.Category==MonitorFailure.Storage);}
+            cipher.FailProtect=false;Assert(calls==0&&business.SendAttempts.Load().Attempts.Count==0,"failed atomic attempt save dispatched or partially persisted");
+        }));
         foreach(var outcome in new[]{DeliveryStatus.Sent,DeliveryStatus.Unknown,DeliveryStatus.Failed})
         {
             var status=outcome;
@@ -121,10 +158,14 @@ internal sealed class RuntimeTemp:IDisposable
 internal sealed class SyntheticCipher:IDataCipher
 {
     readonly byte[] key=SHA256.HashData(Encoding.UTF8.GetBytes("synthetic-test-key-not-a-credential"));
-    public bool FailProtect;public int Reads, Writes;public List<MonitorStatus> Statuses{get;}=[];
+    public bool FailProtect,FailReviewArchive;public int Reads, Writes;public List<MonitorStatus> Statuses{get;}=[];
     public byte[] Protect(byte[] data)
     {
-        Writes++;using(var doc=JsonDocument.Parse(data)){if(doc.RootElement.TryGetProperty("Supervisor",out var health))Statuses.Add((MonitorStatus)health.GetProperty("Status").GetInt32());}
+        Writes++;using(var doc=JsonDocument.Parse(data))
+        {
+            if(doc.RootElement.TryGetProperty("Supervisor",out var health))Statuses.Add((MonitorStatus)health.GetProperty("Status").GetInt32());
+            if(FailReviewArchive&&doc.RootElement.TryGetProperty("Reports",out var reports)&&reports.ValueKind==JsonValueKind.Object)throw new IOException("SYNTHETIC_REVIEW_WRITE_FAILURE");
+        }
         if(FailProtect)throw new IOException("SYNTHETIC_SECRET_STORAGE");
         var nonce=RandomNumberGenerator.GetBytes(12);var cipher=new byte[data.Length];var tag=new byte[16];using var aes=new AesGcm(key,16);aes.Encrypt(nonce,data,cipher,tag);return nonce.Concat(tag).Concat(cipher).ToArray();
     }

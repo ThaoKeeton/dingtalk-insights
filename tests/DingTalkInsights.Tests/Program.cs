@@ -35,7 +35,7 @@ Add("DWS 失败信封不作为空成功", () => Throws(()=>DwsParser.ParseMessag
 Add("模型证据逐字匹配后允许展示", () => {var r=AnalysisValidator.Validate(Analysis(),Batch());True(r.Issues.Count==1 && r.Issues[0].Evidence[0].Message.MessageId=="m2");});
 Add("模型伪造 ID 被拒绝", () => Throws(()=>AnalysisValidator.Validate(Analysis(id:"invented"),Batch())));
 Add("模型伪造引文被拒绝", () => Throws(()=>AnalysisValidator.Validate(Analysis(quote:"已经复测通过"),Batch())));
-Add("模型 resolved 必须降为待验证", () => {var r=AnalysisValidator.Validate(Analysis(status:"resolved"),Batch());True(r.Issues[0].Status==IssueStatus.PendingVerification);});
+Add("模型 resolved 与人工确认分别记录", () => {var r=AnalysisValidator.Validate(Analysis(status:"resolved"),Batch());True(r.Issues[0].ModelReportedResolved&&r.Issues[0].Status==IssueStatus.PendingVerification&&!r.Issues[0].HumanConfirmed);});
 Add("人工确认仅在复核证据后生效", () => {var r=AnalysisValidator.Validate(Analysis(status:"resolved"),Batch());Throws(()=>r.ConfirmResolved(0,false));r.ConfirmResolved(0,true);True(r.Issues[0].Status==IssueStatus.Resolved && r.Issues[0].HumanConfirmed);});
 Add("缺证据和未知状态被拒绝", () => {var n=JsonNode.Parse(Analysis())!;n["issues"]![0]!["evidence"]=new JsonArray();Throws(()=>AnalysisValidator.Validate(n.ToJsonString(),Batch()));Throws(()=>AnalysisValidator.Validate(Analysis(status:"whatever"),Batch()));});
 Add("Markdown 包含来源与不完整提示且不生成活动链接", () => {var b=DwsParser.ParseMessages(Change("complete",JsonValue.Create(false)),scope);var r=AnalysisValidator.Validate(Analysis(),b);var md=ReportRenderer.Markdown(r);True(md.Contains("m2")&&md.Contains("不完整")&&!md.Contains("](http"));});

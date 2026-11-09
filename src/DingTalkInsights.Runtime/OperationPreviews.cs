@@ -45,18 +45,20 @@ public sealed class AnalysisPreview
 }
 public sealed class SendPreview
 {
-    internal SendPreview(PreviewAuthority authority,string name,string destinationFingerprint,string markdown,string fingerprint,SendAttempt? attempt)
+    internal SendPreview(PreviewAuthority authority,string name,string destinationFingerprint,string markdown,string fingerprint,SendAttempt? attempt,ReportSendIdentity identity)
     {
-        Authority=authority;DestinationName=name;DestinationFingerprint=destinationFingerprint;Markdown=markdown;Fingerprint=fingerprint;
-        AlreadyAttempted=attempt is not null;Attempts=attempt?.Attempts??0;
+        Authority=authority;DestinationName=name;DestinationFingerprint=destinationFingerprint;Markdown=markdown;Fingerprint=fingerprint;Identity=identity;
+        AlreadyAttempted=attempt is not null||identity.LegacyRisk;Attempts=attempt?.Attempts??0;
         PreviousStatus=attempt is null?null:attempt.Status switch{SendAttemptStatus.Sent=>DeliveryStatus.Sent,SendAttemptStatus.Failed=>DeliveryStatus.Failed,_=>DeliveryStatus.Unknown};
     }
     internal PreviewAuthority Authority{get;}
     internal string Fingerprint{get;}
+    internal ReportSendIdentity Identity{get;}
     public string DestinationName{get;}
     public string DestinationFingerprint{get;}
     public string Markdown{get;}
     public bool AlreadyAttempted{get;}
+    public bool LegacyFormatRisk=>Identity.LegacyRisk;
     public int Attempts{get;}
     public DeliveryStatus? PreviousStatus{get;}
 }

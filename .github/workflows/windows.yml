@@ -56,7 +56,7 @@ jobs:
           foreach ($file in @('DingTalkInsights.exe','DingTalkInsights.dll','DingTalkInsights.pri','coreclr.dll','hostfxr.dll','THIRD_PARTY_NOTICES.md')) {
             if (-not (Test-Path "dist/app/$file")) { throw "Package missing $file" }
           }
-          @{sourceCommit=(git rev-parse HEAD); version='0.2.2'; platform='win-x64'; framework='WinUI 3'} | ConvertTo-Json | Set-Content dist/app/build-info.json -Encoding utf8
+          @{sourceCommit=(git rev-parse HEAD); version='0.2.3'; platform='win-x64'; framework='WinUI 3'} | ConvertTo-Json | Set-Content dist/app/build-info.json -Encoding utf8
           Compress-Archive dist/app/* dist/DingTalkInsights-win-x64.zip
           $hash = (Get-FileHash dist/DingTalkInsights-win-x64.zip -Algorithm SHA256).Hash
           "$hash  DingTalkInsights-win-x64.zip" | Set-Content dist/DingTalkInsights-win-x64.zip.sha256

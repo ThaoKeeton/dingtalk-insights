@@ -9,6 +9,88 @@ internal static class ReportReviewTests
     static void Denied(Action action){try{action();throw new Exception("expected safe review refusal");}catch(SafetyException){}}
     public static IEnumerable<(string,Action)> All()
     {
+        yield return ("model resolution is visible without a human review and survives reopening",()=>
+        {
+            using var f=new Fixture();var view=f.Store.Reviews.Capture(f.State,f.Report);
+            Check(view.Markdown.Contains("模型判断已解决")&&!view.Markdown.Contains("人工确认已解决"),"the model resolution was hidden or presented as a human decision");
+            Check(!view.Report!.Issues[0].HumanConfirmed&&view.Report.Issues[0].Status==IssueStatus.PendingVerification,"the model was granted human certainty");
+            f.Reopen();view=f.Store.Reviews.Open(f.State,f.State.Reports.Single());
+            Check(view.Markdown.Contains("模型判断已解决")&&!view.Markdown.Contains("人工确认已解决"),"reopening lost the model assessment");
+            view=f.Store.Reviews.Decide(f.State,view,0,true,true);
+            Check(view.Markdown.Contains("人工确认已解决"),"explicit human confirmation was lost");
+            view=f.Store.Reviews.Decide(f.State,view,0,false,true);
+            Check(view.Markdown.Contains("模型判断已解决")&&!view.Markdown.Contains("人工确认已解决"),"revoking human confirmation lost the original model assessment");
+        });
+        yield return ("human confirmation and revocation make unenumerable old send formats a separate risk",()=>
+        {
+            using var f=new Fixture();var view=f.Store.Reviews.Capture(f.State,f.Report);
+            Check(!view.SendIdentity.LegacyRisk,"new unreviewed report unnecessarily requires legacy-format acknowledgement");
+            view=f.Store.Reviews.Decide(f.State,view,0,true,true);Check(view.SendIdentity.LegacyRisk,"human confirmation did not flag prior old-format risk");
+            view=f.Store.Reviews.Decide(f.State,view,0,false,true);Check(view.SendIdentity.LegacyRisk,"revocation forgot earlier human-format risk");
+        });
+        yield return ("a revised source makes the model assessment explicitly historical",()=>
+        {
+            using var f=new Fixture();f.Store.Reviews.Capture(f.State,f.Report);
+            var revised=f.Report.Batch.Messages[0] with{Text="Synthetic revised source"};
+            f.State.Ingest(f.Report.Batch with{Messages=[revised]});f.Store.Save(f.State);
+            var view=f.Store.Reviews.Open(f.State,f.Saved);
+            Check(!view.CanReview&&!view.Report!.Issues[0].HumanConfirmed&&view.Markdown.Contains("历史模型结果")&&view.Markdown.Contains("不代表当前状态")&&view.Markdown.Contains("历史：模型判断已解决"),"old model assessment appeared current");
+        });
+        foreach(var noIssues in new[]{false,true})
+        {
+            var empty=noIssues;
+            yield return ($"model report becomes historical when an unquoted batch source changes (empty={empty})",()=>
+            {
+                using var f=new Fixture();var extra=f.Report.Batch.Messages[0] with{MessageId="other-source",Text="Synthetic unquoted context",CreatedAt=Now.AddMinutes(-5)};
+                var batch=f.Report.Batch with{Messages=[f.Report.Batch.Messages[0],extra]};f.State.Ingest(batch);
+                var raw=empty?"""{"issues":[],"pendingQuestions":[]}""":"""{"issues":[{"title":"Synthetic review","summary":"Needs verification","status":"resolved","communication":"Confirm acceptance","nextStep":"Retest","evidence":[{"messageId":"review-source","quote":"fix submitted"}]}],"pendingQuestions":[]}""";
+                var report=AnalysisValidator.Validate(raw,batch,"Synthetic full-batch task");
+                var saved=new SavedReport(Now,batch.Scope.Key,report.Task,ReportRenderer.Markdown(report),false,batch.Messages.Min(m=>m.CreatedAt));
+                f.State.Reports.Add(saved);f.Store.Save(f.State);var live=f.Store.Reviews.Capture(f.State,report);
+                if(!empty)live=f.Store.Reviews.Decide(f.State,live,0,true,true);
+                f.State.Ingest(batch with{Messages=[extra with{Text="Synthetic changed unquoted context"}]});f.Store.Save(f.State);
+                live=live.Refresh(f.State);var historical=f.Store.Reviews.Open(f.State,saved);
+                Check(historical.Markdown.Contains("历史模型结果")&&historical.Markdown.Contains("不代表当前状态"),"unquoted or empty-evidence batch was falsely presented as current");
+                if(!empty)Check(historical.Report!.Issues[0].HumanConfirmed,"unquoted input incorrectly invalidated an evidence-bound human decision");
+                f.State.Ingest(batch with{Messages=[extra]});f.Store.Save(f.State);
+                Check(live.Refresh(f.State).Markdown.Contains("历史模型结果")&&f.Store.Reviews.Open(f.State,saved).Markdown.Contains("历史模型结果"),"A B A resurrected current model context");
+            });
+        }
+        yield return ("legacy snapshot without the model resolution remains readable without guessing",()=>
+        {
+            using var f=new Fixture();f.Store.Reviews.Capture(f.State,f.Report);
+            var ledger=JsonSerializer.Deserialize<ReportReviewLedger>(f.Cipher.Unprotect(File.ReadAllBytes(f.ReviewsPath)))!;
+            var key=ledger.Reports.Keys.Single();var snapshot=ledger.Reports[key];
+            ledger.Reports[key]=snapshot with{ModelJson=snapshot.ModelJson.Replace("\"status\":\"resolved\"","\"status\":\"pending_verification\"")};
+            File.WriteAllBytes(f.ReviewsPath,f.Cipher.Protect(JsonSerializer.SerializeToUtf8Bytes(ledger)));f.Reopen();
+            var view=f.Store.Reviews.Open(f.State,f.Saved);
+            Check(view.CanReview&&view.Markdown.Contains("待验证")&&!view.Markdown.Contains("模型判断已解决")&&!view.Markdown.Contains("人工确认已解决"),"legacy missing model status was inferred");
+        });
+        yield return ("identical legacy report text cannot merge different model assessments",()=>
+        {
+            using var f=new Fixture();var first=f.Store.Reviews.Capture(f.State,f.Report);
+            var raw=JsonSerializer.Deserialize<ReportReviewLedger>(f.Cipher.Unprotect(File.ReadAllBytes(f.ReviewsPath)))!.Reports.Values.Single().ModelJson;
+            var other=AnalysisValidator.Validate(raw.Replace("\"status\":\"resolved\"","\"status\":\"pending_verification\""),f.Report.Batch,f.Report.Task);
+            Check(ReportRenderer.Markdown(other)==f.Saved.Markdown,"fixture does not reproduce the legacy text collision");
+            Denied(()=>f.Store.Reviews.Capture(f.State,other));
+            Check(f.Store.Reviews.Open(f.State,f.Saved).Markdown==first.Markdown,"collision changed the stored assessment");
+        });
+        yield return ("identical legacy report text cannot merge different evidence revisions",()=>
+        {
+            using var f=new Fixture();f.Store.Reviews.Capture(f.State,f.Report);
+            var revised=f.Report.Batch.Messages[0] with{Text="Synthetic changed context; fix submitted"};var batch=f.Report.Batch with{Messages=[revised]};
+            f.State.Ingest(batch);f.Store.Save(f.State);
+            var raw="""{"issues":[{"title":"Synthetic review","summary":"Needs verification","status":"resolved","communication":"Confirm acceptance","nextStep":"Retest","evidence":[{"messageId":"review-source","quote":"fix submitted"}]}],"pendingQuestions":[]}""";
+            var changed=AnalysisValidator.Validate(raw,batch,f.Report.Task);
+            Check(ReportRenderer.Markdown(changed)==f.Saved.Markdown,"fixture did not reproduce the identical legacy Markdown collision");
+            Denied(()=>f.Store.Reviews.Capture(f.State,changed));
+        });
+        yield return ("a failed assessment snapshot leaves original history readable without inventing a model status",()=>
+        {
+            using var f=new Fixture();f.Cipher.FailReviews=true;Denied(()=>f.Store.Reviews.Capture(f.State,f.Report));f.Cipher.FailReviews=false;
+            f.Reopen();var history=f.Store.Reviews.Open(f.State,f.Saved);
+            Check(history.Report is null&&!history.CanReview&&history.Markdown==f.Saved.Markdown&&!history.Markdown.Contains("模型判断已解决")&&!history.Markdown.Contains("人工确认已解决"),"failed snapshot fabricated a durable assessment");
+        });
         yield return ("review confirmed and reopened decisions survive a new canonical owner",()=>
         {
             using var f=new Fixture();var first=f.Store.Reviews.Capture(f.State,f.Report);var original=f.Saved.Markdown;
@@ -133,10 +215,35 @@ internal static class ReportReviewTests
             var key=doc.Reports.Keys.Single();var entry=doc.Reports[key];doc.Reports[key]=entry with{Decisions=[entry.Decisions[0] with{IssueFingerprint=new string('A',64)}]};
             File.WriteAllBytes(f.ReviewsPath,f.Cipher.Protect(JsonSerializer.SerializeToUtf8Bytes(doc)));Denied(()=>f.Store.Reviews.Open(f.State,f.Saved));
         });
-        yield return ("review identical legacy report rows remain compatible",()=>
+        yield return ("duplicate legacy report rows remain readable but cannot share an unproven snapshot",()=>
         {
             using var f=new Fixture();f.State.Reports.Add(f.Saved);f.Store.Save(f.State);
-            var view=f.Store.Reviews.Capture(f.State,f.Report);Check(f.Store.Reviews.Decide(f.State,view,0,true,true).Report!.Issues[0].HumanConfirmed);
+            Denied(()=>f.Store.Reviews.Capture(f.State,f.Report));var view=f.Store.Reviews.Open(f.State,f.Saved);
+            Check(view.Report is null&&!view.CanReview&&view.Markdown.Contains("Synthetic review")&&!view.Markdown.Contains("模型判断已解决"),"duplicate rows inherited an unproven model assessment");
+            f.State.Reports.RemoveAt(0);f.Store.Save(f.State);f.Reopen();view=f.Store.Reviews.Open(f.State,f.Saved);
+            Check(view.Report is null&&!view.CanReview&&!view.Markdown.Contains("模型判断已解决"),"removing one duplicate resurrected an ambiguous assessment");
+        });
+        yield return ("duplicate report rows cannot transfer an existing human decision",()=>
+        {
+            using var f=new Fixture();var view=f.Store.Reviews.Capture(f.State,f.Report);f.Store.Reviews.Decide(f.State,view,0,true,true);
+            f.State.Reports.Add(f.Saved);f.Store.Save(f.State);view=f.Store.Reviews.Open(f.State,f.Saved);
+            Check(view.Report is null&&!view.Markdown.Contains("人工确认已解决"),"duplicate row inherited an existing human decision");
+            var legacy=System.Text.Json.Nodes.JsonNode.Parse(f.Cipher.Unprotect(File.ReadAllBytes(f.ReviewsPath)))!;
+            foreach(var item in legacy["Reports"]!.AsObject())
+            {item.Value!.AsObject().Remove("Ambiguous");item.Value.AsObject().Remove("InputRevisions");item.Value.AsObject().Remove("InputsInvalidated");}
+            File.WriteAllBytes(f.ReviewsPath,f.Cipher.Protect(JsonSerializer.SerializeToUtf8Bytes(legacy)));
+            f.State.Reports.RemoveAt(0);f.Store.Save(f.State);f.Reopen();view=f.Store.Reviews.Open(f.State,f.Saved);
+            Check(view.Report is null&&!view.Markdown.Contains("人工确认已解决"),"legacy snapshot rewrite or removing one duplicate revived a possibly different human decision");
+        });
+        yield return ("new report gets a distinct identity when the legacy fields collide at the same clock tick",()=>
+        {
+            using var f=new Fixture();var engine=new MonitorEngine(f.State,f.Store);
+            engine.AnalyzeOnceAsync(f.Report.Batch,f.Report.Task,new(),(b,t,c)=>Task.FromResult(new ModelResult(f.Report,0,0)),Now,utcNow:()=>Now).GetAwaiter().GetResult();
+            Check(f.State.Reports.Count==2&&f.State.Reports[0].CreatedAt!=f.State.Reports[1].CreatedAt,"two distinct reports acquired the same legacy identity");
+            var view=f.Store.Reviews.Capture(f.State,f.Report);var decided=f.Store.Reviews.Decide(f.State,view,0,true,true);
+            Check(decided.Report!.Issues[0].HumanConfirmed,"distinct-tick report could not store an explicit decision");
+            f.Clock.Now=f.Report.Batch.Messages[0].CreatedAt.AddDays(30).AddTicks(1);f.Store.Save(f.State);
+            Check(f.State.Reports.Count==0,"distinct report tick extended source retention");
         });
         yield return ("review oversized or duplicate proof records fail closed",()=>
         {
