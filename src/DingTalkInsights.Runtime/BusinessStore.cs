@@ -4,20 +4,55 @@ using DingTalkInsights.Core;
 
 namespace DingTalkInsights.Runtime;
 
-/// <summary>One legacy-compatible state-file lease owns both state and the hash-only send sidecar.</summary>
+/// <summary>One legacy-compatible state-file lease owns state, send attempts and optional review evidence.</summary>
 public sealed class BusinessStore: IStateStore,IDisposable
 {
     readonly EncryptedStateStore state;
     bool disposed;
+    HashSet<string>? persistedReports;
+    bool privacyPrunePending;
     public ISendAttemptStore SendAttempts {get;}
-    public BusinessStore(string root,IDataCipher cipher,TimeProvider? clock=null,int? startupRetentionDays=null)
+    public ReportReviewArchive Reviews{get;}
+    public bool ReviewsAvailable{get;private set;}=true;
+    public bool ReviewMaintenanceBlocked{get;private set;}
+    public BusinessStore(string root,IDataCipher cipher,TimeProvider? clock=null,int? startupRetentionDays=null,Action<string>? persistReviewBarrier=null)
     {
         root=Path.GetFullPath(root);
-        state=new EncryptedStateStore(Path.Combine(root,"state.dpapi"),cipher,clock,startupRetentionDays);
+        Reviews=new(Path.Combine(root,"report-reviews.dpapi"),cipher,EnsureOpen,persistReviewBarrier);
+        state=new EncryptedStateStore(Path.Combine(root,"state.dpapi"),cipher,clock,startupRetentionDays,
+            beforePersist:MaintainBeforePersist);
         SendAttempts=new SendStore(this,new EncryptedDocument<SendLedger>(Path.Combine(root,"send-attempts.dpapi"),cipher,4*1024*1024));
     }
-    public InsightState Load(){EnsureOpen();return state.Load();}
-    public void Save(InsightState value){EnsureOpen();state.Save(value);}
+    public InsightState Load()
+    {
+        EnsureOpen();ReviewMaintenanceBlocked=false;InsightState value;
+        try{value=state.Load();if(!ReviewMaintenanceBlocked)MaintainBeforePersist(value,trimmed:false);}
+        catch(MonitoringFault fault)when(fault.Category==MonitorFailure.Storage&&ReviewMaintenanceBlocked)
+        {value=state.ReadRetained();}
+        persistedReports=value.Reports.Select(ReportReviewSnapshot.Key).ToHashSet();return value;
+    }
+    void MaintainBeforePersist(InsightState value,bool trimmed)
+    {
+        var next=value.Reports.Select(ReportReviewSnapshot.Key).ToHashSet();
+        var required=trimmed||privacyPrunePending||persistedReports?.Except(next).Any()==true;
+        try
+        {
+            ReviewsAvailable=Reviews.Maintain(value,required);ReviewMaintenanceBlocked=false;privacyPrunePending=false;
+        }
+        catch(MonitoringFault fault)when(fault.Category==MonitorFailure.Storage)
+        {ReviewsAvailable=false;ReviewMaintenanceBlocked=true;privacyPrunePending=required;throw;}
+    }
+    public void Save(InsightState value)
+    {
+        EnsureOpen();
+        // Persist invalidation (or its fail-closed barrier) before a new source revision can
+        // become canonical. A failed state write may lose certainty, never resurrect it.
+        state.Save(value);persistedReports=value.Reports.Select(ReportReviewSnapshot.Key).ToHashSet();
+    }
+    public void ClearIndex(InsightState value)
+    {
+        EnsureOpen();value.ClearIndex();Reviews.Clear();privacyPrunePending=false;Save(value);ReviewsAvailable=true;
+    }
     void EnsureOpen()=>ObjectDisposedException.ThrowIf(disposed,this);
     public void Dispose(){if(disposed)return;disposed=true;state.Dispose();}
     sealed class SendStore(BusinessStore owner,EncryptedDocument<SendLedger> document):ISendAttemptStore

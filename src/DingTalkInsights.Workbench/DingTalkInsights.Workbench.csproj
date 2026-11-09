@@ -8,7 +8,7 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <GenerateDependencyFile>true</GenerateDependencyFile>
-    <Version>0.3.2</Version>
+    <Version>0.3.3</Version>
     <WorkbenchSnapshotRoot Condition="'$(WorkbenchSnapshotRoot)' == ''">$(MSBuildThisFileDirectory)../../eng/vendor/workbench-27154465</WorkbenchSnapshotRoot>
   </PropertyGroup>
   <ItemGroup>

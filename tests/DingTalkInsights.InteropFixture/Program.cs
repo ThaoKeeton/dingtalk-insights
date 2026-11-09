@@ -14,11 +14,14 @@ var clock=new FixedClock(now);var scope=new QueryScope("fixture:person","synthet
 var message=new SourceMessage("fixture-1",scope.ConversationId,"fixture-person","Synthetic sender","Synthetic compatibility evidence",scope.Start.AddMinutes(2));
 var batch=new MessageBatch(scope,[message],true,["Synthetic warning"],new Dictionary<string,JsonElement>());
 var model=new ModelSettings();const string task="Synthetic interoperability task";
+var report=AnalysisValidator.Validate("""{"issues":[{"title":"Synthetic interop review","summary":"Needs human verification","status":"resolved","communication":"","nextStep":"","evidence":[{"messageId":"fixture-1","quote":"compatibility evidence"}]}],"pendingQuestions":[]}""",batch,task);
 var expectedFacts=new{scopeHash=scope.Fingerprint,revision=message.Revision,batchHash=batch.Fingerprint,attempt=InsightState.AttemptKey(scope,message),requestHash=OpenAiClient.Fingerprint(batch,task,model),day="2035-02-03",requests=1,reserved=0.01m};
 using var store=new BusinessStore(Path.Combine(root,args[2]),cipher,clock);
 if(args[0]=="write")
 {
     var state=store.Load();state.Ingest(batch);state.MarkAttempted(scope,batch.Messages);state.Reserve(model,0.01m,now);store.Save(state);
+    state.Reports.Add(new(now,scope.Key,task,ReportRenderer.Markdown(report),false,message.CreatedAt));store.Save(state);
+    store.Reviews.Decide(state,store.Reviews.Capture(state,report),0,true,true);
     var destination=Guard.Hash("synthetic-destination");var payload=Guard.Hash("synthetic-payload");var ledger=new SendLedger();
     ledger.Attempts[Guard.Hash(destination+"\n"+payload)]=new(destination,payload,now,SendAttemptStatus.Pending,1);store.SendAttempts.Save(ledger);
     File.WriteAllText(Path.Combine(root,args[2]+"-facts.json"),JsonSerializer.Serialize(expectedFacts));
@@ -36,7 +39,15 @@ else if(args[0]=="read")
         (b,t,ct)=>{calls++;throw new Exception("Duplicate paid dispatch");},model,state.RetentionDays,scope.End);
     if(calls!=0||state.Requests!=1||state.ReservedUsd!=0.01m)throw new Exception("Runtime change replayed attempted source.");
     if(store.SendAttempts.Load().Attempts.Single().Value.Status!=SendAttemptStatus.Pending)throw new Exception("Uncertain durable send attempt changed.");
-    Console.WriteLine($"PASS {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription} {args[2]}: persisted hashes/attempts/UTC budget and no duplicate analysis");
+    var review=store.Reviews.Open(state,state.Reports.Single());
+    if(!review.CanReview||review.Report?.Issues[0].HumanConfirmed!=true)throw new Exception("Cross-runtime human verification lost.");
+    if(Environment.Version.Major>=10)
+    {
+        var revoked=store.Reviews.Decide(state,review,0,false,true);
+        if(revoked.Report!.Issues[0].HumanConfirmed)throw new Exception("Cross-runtime revoke did not restore tentative state.");
+        store.Reviews.Decide(state,revoked,0,true,true);
+    }
+    Console.WriteLine($"PASS {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription} {args[2]}: persisted hashes/attempts/UTC budget, human confirm/revoke/restore and no duplicate analysis");
 }
 else throw new ArgumentException("Unknown fixture command.");
 return 0;

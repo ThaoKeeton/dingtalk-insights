@@ -88,7 +88,7 @@ internal static partial class AcceptanceDriver
             Require(Find<TextBox>(page,"DTI 整理事项").Text==Draft,"Draft lost on recreated native page.");
             Require(Resources(plugin).GetProperty("Subscriptions").GetInt32()==1,"Page recreation duplicated subscriptions.");
             Record("Native page/settings controls, empty PasswordBoxes, native edit/save, encrypted draft and navigation retention");
-            Invoke(Find<Button>(page,"DTI 打开模拟"));await Wait(()=>Resources(plugin).GetProperty("StoreOwned").GetBoolean(),"Demo store did not open.");
+            Invoke(Find<Button>(page,"DTI 打开模拟"));await WaitActionRendered(plugin,"DTI 打开模拟",()=>Resources(plugin).GetProperty("StoreOwned").GetBoolean(),"Demo store did not open/render.");
             await ConfirmAction(window,page,"DTI 读取一次",false);
             Require(Resources(plugin).GetProperty("Dispatches").GetInt64()==0,"Cancelled read dispatched.");
             await ConfirmAction(window,page,"DTI 读取一次",true);
@@ -103,6 +103,17 @@ internal static partial class AcceptanceDriver
             Require(Find<TextBox>(page,"DTI 待核实结果").Text.Contains("待核实"),"Tentative evidence result missing.");
             Require(Find<ComboBox>(page,"DTI 历史结果").Items.Count>0,"Real Core history not displayed.");
             Record("Real native read cancel/confirm, Core demo collection/local search/evidence-backed analysis/history; no network model/sender");
+            await ConfirmAction(window,page,"DTI 人工确认解决",false);
+            await WaitActionRendered(plugin,"DTI 人工确认解决",()=>!Find<TextBox>(page,"DTI 待核实结果").Text.Contains("人工确认已解决"),"Cancelled human review changed certainty.");
+            await ConfirmAction(window,page,"DTI 人工确认解决",true);
+            await WaitActionRendered(plugin,"DTI 人工确认解决",()=>Find<TextBox>(page,"DTI 待核实结果").Text.Contains("人工确认已解决"),"Confirmed human review was not rendered after persistence.");
+            Find<ComboBox>(page,"DTI 历史结果").SelectedIndex=0;
+            await WaitActionRendered(plugin,"selection",()=>Find<TextBox>(page,"DTI 待核实结果").Text.Contains("人工确认已解决"),"History lost durable human confirmation.");
+            await ConfirmAction(window,page,"DTI 撤销人工确认",true);
+            await WaitActionRendered(plugin,"DTI 撤销人工确认",()=>!Find<TextBox>(page,"DTI 待核实结果").Text.Contains("人工确认已解决")&&Find<TextBox>(page,"DTI 待核实结果").Text.Contains("已撤销"),"Revoke did not restore tentative status.");
+            await ConfirmAction(window,page,"DTI 人工确认解决",true);
+            await WaitActionRendered(plugin,"DTI 人工确认解决",()=>Find<TextBox>(page,"DTI 待核实结果").Text.Contains("人工确认已解决"),"Repeated explicit confirmation failed.");
+            Record("Actual native human-review cancel/confirm, history restore, revoke/reconfirm persist through production encrypted archive; no model/send dispatch");
             await Start(window,page,plugin);
             var actualLoop=Loop(plugin);Require(!actualLoop.IsCompleted,"Actual MonitorSupervisor task not alive.");
             var reads=Resources(plugin).GetProperty("Dispatches").GetInt64();
@@ -134,7 +145,11 @@ internal static partial class AcceptanceDriver
             Require(!Observation(plugin).GetProperty("IsMonitoring").GetBoolean()&&Resources(plugin).GetProperty("Dispatches").GetInt64()==0,"Re-enable restored business authority.");
             settings=await Settings(window);Invoke(Find<Button>(settings,"DTI 载入设置"));await Wait(()=>Find<TextBlock>(settings,"DTI 操作结果").Text.Contains("已载入配置"),"Re-enable load failed.");
             Require(Find<TextBox>(settings,"DTI 轮询秒数").Text=="60"&&Find<TextBox>(settings,"DTI 整理事项").Text==Draft,"Saved setting/draft roundtrip failed.");
-            page=await Workspace(window);Invoke(Find<Button>(page,"DTI 打开模拟"));await Wait(()=>Resources(plugin).GetProperty("StoreOwned").GetBoolean(),"Re-enabled demo open failed.");
+            page=await Workspace(window);Invoke(Find<Button>(page,"DTI 打开模拟"));
+            await WaitActionRendered(plugin,"DTI 打开模拟",()=>Resources(plugin).GetProperty("StoreOwned").GetBoolean()&&Find<ComboBox>(page,"DTI 历史结果").Items.Count>0,"Re-enabled demo open/history render failed.");
+            Find<ComboBox>(page,"DTI 历史结果").SelectedIndex=0;
+            await WaitActionRendered(plugin,"selection",()=>Find<TextBox>(page,"DTI 待核实结果").Text.Contains("人工确认已解决"),"Re-enable lost human confirmation.");
+            Record("Fresh controller after disable restores exact saved human verification without a new model");
             await Start(window,page,plugin);
             Record("Re-enable creates fresh controller/default demo; explicit saved-config load and separate new monitor confirmation work");
             await VerifyPendingStopControls(window,options,observations,Record);
@@ -150,6 +165,12 @@ internal static partial class AcceptanceDriver
             Require(Find<TextBox>(settings,"DTI 轮询秒数").Text=="60"&&Find<TextBox>(settings,"DTI 整理事项").Text==Draft,"Cross-process native settings/draft lost.");
             Require(Resources(plugin).GetProperty("Dispatches").GetInt64()==0,"Loading restart config dispatched business work.");
             observations.Add(new{stage="safe-restart",resources=Resources(plugin)});
+            page=await Workspace(window);Invoke(Find<Button>(page,"DTI 打开模拟"));
+            await WaitActionRendered(plugin,"DTI 打开模拟",()=>Resources(plugin).GetProperty("StoreOwned").GetBoolean()&&Find<ComboBox>(page,"DTI 历史结果").Items.Count>0,"Restart demo open/history render failed.");
+            Find<ComboBox>(page,"DTI 历史结果").SelectedIndex=0;
+            await WaitActionRendered(plugin,"selection",()=>Find<TextBox>(page,"DTI 待核实结果").Text.Contains("人工确认已解决"),"Cross-process human review did not restore.");
+            Require(Resources(plugin).GetProperty("Dispatches").GetInt64()==0,"Restoring saved review dispatched external/model work.");
+            Record("Fresh actual process restores DPAPI human verification from selected history with zero dispatch");
             Record("New actual process restores enabled/trusted plugin safely; default demo/no business authority; native saved preferences/draft roundtrip");
         }
         else if(options.Phase is "maintained" or "rolledback")
@@ -157,6 +178,7 @@ internal static partial class AcceptanceDriver
             var fresh=manager.Plugins.Single();Require(fresh.Manifest?.Id==Id&&fresh.State==PluginState.Disabled&&!fresh.IsLoaded&&!fresh.IsTrusted&&!fresh.DesiredEnabled,"SDK install/rollback inherited trust or enabled authority.");
             Require(!(await manager.EnableAsync(Id)).Succeeded,"SDK install/rollback enabled without fresh trust.");
             Require(Fingerprint(fresh.PackagePath)==packageHash&&File.Exists(Path.Combine(data,"connection-draft.dpapi")),"SDK install/rollback lost code/current data.");
+            Require(File.Exists(Path.Combine(data,"demo","report-reviews.dpapi")),"SDK install/rollback lost human verification archive.");
             Require(manager.GetBackgroundTaskSnapshots(Id).Count==0&&!AppDomain.CurrentDomain.GetAssemblies().Any(a=>a.GetName().Name=="DingTalkInsights.Workbench"),"SDK maintenance auto-loaded plugin/collector.");
             Record("Actual fresh-process SDK "+options.Phase+" code is disabled/untrusted/unloaded; existing encrypted data retained; fresh trust still required");
             if(options.Phase=="maintained")
@@ -176,7 +198,7 @@ internal static partial class AcceptanceDriver
         }
         else
         {
-            Require(manager.Plugins.Count==0,"Offline removed package still discovered.");Require(Directory.Exists(data)&&File.Exists(Path.Combine(data,"connection-draft.dpapi")),"Offline package removal deleted user data.");
+            Require(manager.Plugins.Count==0,"Offline removed package still discovered.");Require(Directory.Exists(data)&&File.Exists(Path.Combine(data,"connection-draft.dpapi"))&&File.Exists(Path.Combine(data,"demo","report-reviews.dpapi")),"Offline package removal deleted user data/review archive.");
             var home=await window.SmokeNavigateAsync("plugins");Require(!Descendants<Button>(home).Any(b=>AutomationProperties.GetName(b)=="启用 钉钉沟通事项"),"Removed package has native action.");
             Record(options.Phase=="removed"?"Actual SDK staged removal applied by a fresh lease-owning helper before discovery; absent relaunch retains current encrypted data/settings/history; no purge":"After verified prior exit, driver-only offline package removal relaunches absent while encrypted data remain; separate legacy regression, not SDK uninstall");
         }

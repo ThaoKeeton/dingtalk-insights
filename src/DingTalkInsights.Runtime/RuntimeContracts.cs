@@ -42,6 +42,8 @@ public sealed record RuntimeSnapshot
     public string Draft{get;init;}="";
     public IReadOnlyList<SourceMessage> Candidates{get;init;}=[];
     public string Markdown{get;init;}="";
+    public bool CanReviewReport{get;init;}
+    public int ReviewIssueCount{get;init;}
     public DateTimeOffset? ReportOldestSourceAt{get;init;}
     public IReadOnlyList<SavedReport> History{get;init;}=[];
     public IReadOnlyList<Conversation> Conversations{get;init;}=[];

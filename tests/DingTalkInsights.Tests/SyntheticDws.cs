@@ -9,6 +9,7 @@ internal sealed class SyntheticDws:IDisposable
     public string DirectoryPath{get;}=Path.Combine(Path.GetTempPath(),"dingtalk-process-fixture-"+Guid.NewGuid().ToString("N"));
     public string Executable{get;}=Path.Combine(AppContext.BaseDirectory,"DingTalkInsights.Tests"+(OperatingSystem.IsWindows()?".exe":""));
     public int Reads=>File.Exists(Path.Combine(DirectoryPath,"reads"))?File.ReadAllLines(Path.Combine(DirectoryPath,"reads")).Length:0;
+    public int ReadinessChecks=>File.Exists(Path.Combine(DirectoryPath,"readiness"))?File.ReadAllLines(Path.Combine(DirectoryPath,"readiness")).Length:0;
     public SyntheticDws(string stdout="",string stderr="",int exitCode=0,bool messages=false)
     {
         Directory.CreateDirectory(DirectoryPath);
@@ -22,6 +23,7 @@ internal sealed class SyntheticDws:IDisposable
         if(directory is null||arguments.Length==0)return null;
         if(arguments.Contains("auth")&&arguments.Contains("status")&&arguments.Contains("--readonly"))
         {
+            File.AppendAllText(Path.Combine(directory,"readiness"),"synthetic-readiness\n");
             Console.Write("{\"success\":true,\"authenticated\":true,\"token_valid\":true,\"corp_id\":\"corp\",\"user_id\":\"user\"}");
             return 0;
         }

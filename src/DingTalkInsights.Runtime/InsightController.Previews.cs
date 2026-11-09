@@ -68,9 +68,25 @@ public sealed partial class InsightController
             Commit(operation,()=>result=new(NewAuthority(CredentialUse.Webhook),target.Name,Guard.Hash(target.Url)[..12],markdown,WebhookClient.Fingerprint(target,markdown),previous));return true;
         },RuntimeFailure.Storage,cancellation);return result;
     }
+    public async Task<ResolutionPreview?> PreviewResolutionAsync(int index,bool resolved,CancellationToken cancellation=default)
+    {
+        ResolutionPreview? result=null;
+        await Run(operation=>
+        {
+            Commit(operation,()=>
+            {
+                RequireStore();RefreshReview();
+                if(review is null&&report is not null)ApplyReview(store!.Reviews.Capture(state,report));
+                var view=review??throw new RuntimeFault(RuntimeFailure.Configuration);
+                if(view.Report is null||index<0||index>=view.Report.Issues.Count||resolved&&!view.CanReview)
+                    throw new RuntimeFault(RuntimeFailure.Configuration);
+                result=new(NewAuthority(CredentialUse.None),view,index,resolved);
+            });return Task.FromResult(true);
+        },RuntimeFailure.Storage,cancellation);return result;
+    }
     void RequireSendableReport()
     {
         RequireCanonical();if(markdown.Length==0||reportOldest is null||reportOldest<state.RetentionCutoff)throw new RuntimeFault(RuntimeFailure.Retention);
-        if(report?.Batch.IsDemo==true||report is null&&state.Reports.Any(r=>r.IsDemo&&r.Markdown==markdown))throw new RuntimeFault(RuntimeFailure.Connection);
+        if(review?.Saved.IsDemo==true||report?.Batch.IsDemo==true||report is null&&state.Reports.Any(r=>r.IsDemo&&r.Markdown==markdown))throw new RuntimeFault(RuntimeFailure.Connection);
     }
 }

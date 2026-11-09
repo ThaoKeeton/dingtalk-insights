@@ -171,7 +171,7 @@ public sealed partial class InsightController
             }
             var result=await new MonitorEngine(state,OwnedStore(operation.Generation)).AnalyzeOnceAsync(batch,preview.Task,model,
                 (selected,text,token)=>AnalyzePrepared(selected,text,model,credential,revision,operation.Generation,token),clock.UtcNow,operation.Token,()=>clock.UtcNow);
-            Commit(operation,()=>{SetReport(result.Report);notice="已生成带来源的待核实结果；请回原会话核对。";});return true;
+            Commit(operation,()=>{if(SetReport(result.Report))notice="已生成带来源的待核实结果；请回原会话核对。";});return true;
         },RuntimeFailure.Model,cancellation);
     }
     public Task<bool> SelectHistoryAsync(SavedReport selected,CancellationToken cancellation=default)=>Run(operation=>
@@ -180,16 +180,30 @@ public sealed partial class InsightController
         Commit(operation,()=>
         {
             if(!state.Reports.Contains(selected))throw new RuntimeFault(RuntimeFailure.Retention);
-            previews.Clear();report=null;markdown=selected.Markdown;reportOldest=selected.OldestSourceAt;
+            previews.Clear();review=null;report=null;markdown="";reportOldest=null;
+            ApplyReview(store!.ReviewsAvailable?store.Reviews.OpenReadable(state,selected):ReportReviewView.Legacy(selected,unavailable:true));
+            notice=review!.Unavailable?"核实文件暂不可用，已保留原文件并仅载入原始报告文本；可检查存储或明确清理索引。":review.Report is null?"旧历史仅保留原 Markdown，可查看和导出；没有可持久核实的证据快照。":review.CanReview?"已载入历史及本机人工核实记录。":"证据已修订或缺失，原人工核实记录已失效。";
         });return Task.FromResult(true);
-    },RuntimeFailure.Storage,cancellation);
-    public Task<bool> ConfirmResolvedAsync(int index,bool evidenceReviewed,CancellationToken cancellation=default)
+    },RuntimeFailure.Storage,cancellation,readOnly:true);
+    public async Task<bool> ConfirmResolvedAsync(int index,bool evidenceReviewed,CancellationToken cancellation=default)
+    {
+        if(!evidenceReviewed)return false;
+        var preview=await PreviewResolutionAsync(index,true,cancellation);
+        return preview is not null&&await ConfirmResolvedAsync(preview,true,cancellation);
+    }
+    public Task<bool> ConfirmResolvedAsync(ResolutionPreview preview,bool evidenceReviewed,CancellationToken cancellation=default)
     {
         if(!evidenceReviewed)return Task.FromResult(false);
         return Run(operation=>
         {
-            Commit(operation,()=>{if(report is null)throw new RuntimeFault(RuntimeFailure.Configuration);report.ConfirmResolved(index,true);SetReport(report);});return Task.FromResult(true);
-        },RuntimeFailure.Configuration,cancellation);
+            Commit(operation,()=>
+            {
+                RequireStore();Consume(preview.Authority,operation);RefreshReview();
+                if(review?.Fingerprint!=preview.View.Fingerprint)throw new RuntimeFault(RuntimeFailure.Configuration);
+                var saved=store!.Reviews.Decide(state,preview.View,preview.Index,preview.Resolved,true);
+                ApplyReview(saved);previews.Clear();notice=preview.Resolved?"人工核实已加密保存，重开此报告可恢复；仅适用于这些原文修订。":"人工确认已撤销并保存，恢复原报告的待核实状态。";
+            });return Task.FromResult(true);
+        },RuntimeFailure.Storage,cancellation);
     }
     public Task<bool> SendReportAsync(SendPreview preview,bool confirmed,bool humanConfirmedRetry=false,CancellationToken cancellation=default)
     {
@@ -227,8 +241,8 @@ public sealed partial class InsightController
         if(!confirmed)return Task.FromResult(false);
         return Run(operation=>
         {
-            RequireStore();RequireStopped();Commit(operation,()=>{state.ClearIndex();store!.Save(state);ClearVisible();});return Task.FromResult(true);
-        },RuntimeFailure.Storage,cancellation);
+            RequireStore();RequireStopped();Commit(operation,()=>{ClearVisible();store!.ClearIndex(state);});return Task.FromResult(true);
+        },RuntimeFailure.Storage,cancellation,readOnly:true);
     }
     static MessageBatch Limit(MessageBatch batch)=>batch.Messages.Count<=40?batch:batch with{Messages=batch.Messages.Take(40).ToArray(),Complete=false,
         Warnings=batch.Warnings.Concat(["当前可整理预览最多 40 条；未显示来源不会上传。"]).ToArray()};

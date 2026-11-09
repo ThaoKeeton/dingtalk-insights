@@ -22,7 +22,7 @@ public sealed partial class InsightController
     {lock(sync){EnsureCurrent(operation.Generation,operation.Token);action();}}
     Task<T> Dispatch<T>(long expected,CancellationToken cancellation,Func<Task<T>> action)
     {lock(sync){EnsureCurrent(expected,cancellation);dispatches++;return action();}}
-    async Task<bool> Run(Func<Operation,Task<bool>> action,RuntimeFailure fallback,CancellationToken cancellation)
+    async Task<bool> Run(Func<Operation,Task<bool>> action,RuntimeFailure fallback,CancellationToken cancellation,bool readOnly=false)
     {
         Operation operation;
         // Own pending work before the first semaphore/hash/configuration await.
@@ -38,7 +38,11 @@ public sealed partial class InsightController
             if(!acquired){lock(sync)notice=new RuntimeFault(RuntimeFailure.Busy).Message;return false;}
             Commit(operation,()=>
             {
-                EnforceRetention();if(store is not null)store.Save(state);
+                EnforceRetention();if(store is not null)
+                {
+                    try{store.Save(state);}
+                    catch(MonitoringFault fault)when(readOnly&&fault.Category==MonitorFailure.Storage&&store.ReviewMaintenanceBlocked){}
+                }
             });
             var result=await action(operation);Commit(operation,()=>EnforceRetention());return result;
         }
@@ -142,8 +146,7 @@ public sealed partial class InsightController
         lock(sync)
         {
             if(deactivated||stopCount>0)return;
-            if(result?.Report is {} value)SetReport(value);
-            notice=MonitorNotices.For(state.Supervisor.Failure);
+            if(result?.Report is not {} value||SetReport(value))notice=MonitorNotices.For(state.Supervisor.Failure);
         }
         Publish();
     }

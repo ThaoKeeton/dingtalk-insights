@@ -35,6 +35,7 @@ public sealed partial class InsightController:IAsyncDisposable
     string draft="",markdown="",notice="默认模拟模式；启用与导航不会读取聊天、上传或发送。";
     MessageBatch? candidates;
     AnalysisReport? report;
+    ReportReviewView? review;
     DateTimeOffset? reportOldest;
     IReadOnlyList<Conversation> conversations=[];
     MonitoringConfiguration? configuration;
@@ -74,7 +75,9 @@ public sealed partial class InsightController:IAsyncDisposable
             }
             return value with{Candidates=Array.AsReadOnly(value.Candidates.Where(m=>m.CreatedAt>=cutoff).ToArray()),
                 History=Array.AsReadOnly(value.History.Where(r=>r.CreatedAt>=cutoff&&r.OldestSourceAt is {} oldest&&oldest>=cutoff).ToArray()),
-                Markdown=value.ReportOldestSourceAt is {} at&&at>=cutoff?value.Markdown:""};
+                Markdown=value.ReportOldestSourceAt is {} at&&at>=cutoff?value.Markdown:"",
+                CanReviewReport=value.CanReviewReport&&value.ReportOldestSourceAt>=cutoff,
+                ReviewIssueCount=value.ReportOldestSourceAt>=cutoff?value.ReviewIssueCount:0};
         }
     }
     public void SetDraft(string text)
@@ -136,7 +139,7 @@ public sealed partial class InsightController:IAsyncDisposable
     void RequireCanonical(){if(connection!=RuntimeConnection.Canonical||store is null||canonicalRoot is null)throw new RuntimeFault(RuntimeFailure.Connection);}
     void RequireStopped(){if(supervisor?.IsRunning==true)throw new RuntimeFault(RuntimeFailure.Busy);}
     void RequireStore(){if(store is null)throw new RuntimeFault(RuntimeFailure.Connection);}
-    void ClearVisible(){previews.Clear();candidates=null;report=null;markdown="";reportOldest=null;conversations=[];draft="";configuration=null;}
+    void ClearVisible(){previews.Clear();candidates=null;report=null;review=null;markdown="";reportOldest=null;conversations=[];draft="";configuration=null;}
     DateTimeOffset RetentionNow()
     {
         if(clock.UtcNow>visibleRetentionReference)visibleRetentionReference=clock.UtcNow;
@@ -147,15 +150,31 @@ public sealed partial class InsightController:IAsyncDisposable
     {
         state.Trim(RetentionNow(),state.RetentionDays);
         if(candidates?.Messages.Any(m=>m.CreatedAt<state.RetentionCutoff)==true)candidates=null;
-        if(reportOldest is {} oldest&&oldest<state.RetentionCutoff){report=null;markdown="";reportOldest=null;}
+        if(reportOldest is {} oldest&&(oldest<state.RetentionCutoff||review is {} view&&!state.Reports.Contains(view.Saved))){report=null;review=null;markdown="";reportOldest=null;previews.Clear();}
     }
-    void SetReport(AnalysisReport value){previews.Clear();report=value;markdown=ReportRenderer.Markdown(value);reportOldest=value.Batch.Messages.Min(m=>m.CreatedAt);}
+    const string ReviewStorageNotice="结果已保存，但人工核实快照未能保存；请检查本机存储后重新打开，不会显示已持久核实成功。";
+    bool SetReport(AnalysisReport value)
+    {
+        previews.Clear();review=null;report=value;markdown=ReportRenderer.Markdown(value);reportOldest=value.Batch.Messages.Min(m=>m.CreatedAt);
+        try{ApplyReview(store!.Reviews.Capture(state,value));return true;}
+        catch(Exception){notice=ReviewStorageNotice;return false;}
+    }
+    void ApplyReview(ReportReviewView value)
+    {review=value;report=value.Report;markdown=value.Markdown;reportOldest=value.Saved.OldestSourceAt;}
+    void RefreshReview()
+    {
+        if(review is not {} current)return;
+        var next=store?.ReviewsAvailable==false?ReportReviewView.Legacy(current.Saved,unavailable:true):current.Refresh(state);
+        if(next.Fingerprint!=current.Fingerprint){previews.Clear();ApplyReview(next);}
+    }
     void Publish()
     {
         lock(sync)
         {
+            RefreshReview();
             snapshot=new RuntimeSnapshot{Active=!deactivated,IsBusy=pending.Count>0,IsMonitoring=supervisor?.IsRunning==true,Connection=connection,
                 Draft=draft,Candidates=Array.AsReadOnly(candidates?.Messages.ToArray()??[]),Markdown=markdown,ReportOldestSourceAt=reportOldest,
+                CanReviewReport=review?.CanReview==true,ReviewIssueCount=review?.Report?.Issues.Count??0,
                 History=Array.AsReadOnly(state.Reports.ToArray()),Conversations=Array.AsReadOnly(conversations.ToArray()),Health=state.Supervisor,
                 Origin=state.Monitoring,Configuration=configuration,BudgetDay=state.BudgetDay,ReservedUsd=state.ReservedUsd,Requests=state.Requests,Notice=notice,RetentionDays=state.RetentionDays,RetentionReference=state.RetentionReference};
         }
@@ -173,7 +192,7 @@ public sealed partial class InsightController:IAsyncDisposable
         root=Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         for(var directory=new DirectoryInfo(root);directory is not null;directory=directory.Parent)
             if(!directory.Exists||(directory.Attributes&FileAttributes.ReparsePoint)!=0)throw new RuntimeFault(RuntimeFailure.Connection);
-        foreach(var name in new[]{"state.dpapi","state.dpapi.lock","credentials.dpapi","send-attempts.dpapi"})
+        foreach(var name in new[]{"state.dpapi","state.dpapi.lock","credentials.dpapi","send-attempts.dpapi","report-reviews.dpapi","report-reviews.dpapi.blocked"})
         {
             var path=Path.Combine(root,name);
             if(File.Exists(path)&&(File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)throw new RuntimeFault(RuntimeFailure.Connection);

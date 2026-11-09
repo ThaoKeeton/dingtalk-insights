@@ -78,6 +78,16 @@ internal static class HostStartupTests
                 finally{SynchronizationContext.SetSynchronizationContext(previous);}
             }
         });
+        yield return ("host review cleanup blocks launch recovery before credentials or DWS readiness",()=>
+        {
+            using var dws=new SyntheticDws(messages:true);var host=new MainWindow(dws,true);host.SeedRecovery();host.ReviewRecoveryBlocked=true;
+            try
+            {
+                host.Recover().WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+                Assert(!host.HasSupervisor&&!host.IsRunning&&dws.ReadinessChecks==0&&dws.Reads==0&&host.ModelCalls==0&&host.CredentialReads==0,"read-only recovery touched a source/model or created authority");
+            }
+            finally{host.Stop().WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();}
+        });
     }
 }
 
@@ -109,6 +119,8 @@ namespace DingTalkInsights.Desktop
         public bool HasSupervisor=>supervisor is not null;
         public bool IsRunning=>monitorCancellation is not null;
         public bool IsClosed{get;private set;}
+        public bool ReviewRecoveryBlocked{get;set;}
+        public int CredentialReads=>vault.Reads;
         readonly InsightState state=new();readonly IStateStore store;readonly MonitorEngine engine;
         readonly ConsentGate gate=new();readonly MessageBatch demoBatch=Demo.CreateBatch();readonly TestVault vault=new();
         readonly bool smoke=false;readonly string dataRoot;readonly SemaphoreSlim operations=new(1,1);
@@ -142,7 +154,8 @@ namespace DingTalkInsights.Desktop
         Task SaveSettingsAsync(){BackgroundPolicy.Revoke(state);store.Save(state);return Task.CompletedTask;}
         Func<MessageBatch,string,CancellationToken,Task<ModelResult>> Analyzer(bool demo,string key,ModelSettings model)=>
             (batch,task,_)=>{ModelCalls++;return Task.FromResult(new ModelResult(new AnalysisReport(batch,[],[],task),1,1));};
-        void LoadConnectionFields(){}void ShowMainWindow(){}void RefreshStatus(){}void UpdateMonitorControls(){}void SetReport(AnalysisReport report){}
+        const string ReviewStorageNotice="Synthetic review storage failure";
+        void LoadConnectionFields(){}void ShowMainWindow(){}void RefreshStatus(){}void UpdateMonitorControls(){}bool SetReport(AnalysisReport report)=>true;
         void Close(){IsClosed=allowClose;}
     }
     public sealed class HostMemoryStore:IStateStore
@@ -158,7 +171,11 @@ namespace DingTalkInsights.Desktop
     }
     sealed class TestDialog{public void Hide(){}}
     sealed record TestSettings(bool CloseToTray,bool UploadToModel);
-    sealed class TestVault{public string Revision=>Guard.Hash("synthetic-vault");public TestCredentials Read()=>new("SYNTHETIC_KEY");}
+    sealed class TestVault
+    {
+        public int Reads;public string Revision=>Guard.Hash("synthetic-vault");
+        public TestCredentials Read(){Reads++;return new("SYNTHETIC_KEY");}
+    }
     sealed record TestCredentials(string OpenAiKey);
 }
 namespace Microsoft.UI.Xaml

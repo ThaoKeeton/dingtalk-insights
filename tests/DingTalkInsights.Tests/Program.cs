@@ -50,6 +50,8 @@ Add("缺失或错误范围元数据不能推进断点",()=>{foreach(var field in
 Add("补充完整性字段未知类型或真值均不完整",()=>{foreach(var field in new[]{"truncatedByPageLimit","truncatedByResultLimit"})foreach(var value in new JsonNode?[]{null,JsonValue.Create("false"),JsonValue.Create(true)})True(!DwsParser.ParseMessages(Change(field,value),scope).Complete);});
 
 tests.AddRange(DeliveryTests.All());
+tests.AddRange(ReportReviewTests.All());
+tests.AddRange(ReviewControllerTests.All());
 tests.AddRange(RuntimeTests.All());
 tests.AddRange(WorkbenchAdapterTests.All());
 tests.AddRange(NativeAdapterTests.All());

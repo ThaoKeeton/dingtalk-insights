@@ -27,6 +27,7 @@ public sealed partial class MainWindow:Window
     Task? monitorTask;
     MessageBatch? candidates;
     AnalysisReport? currentReport;
+    ReportReviewView? review;
     SavedReport? displayedSavedReport;
     UserSettings savedSettings=new();
     readonly MessageBatch demoBatch=Demo.CreateBatch();
@@ -108,20 +109,21 @@ public sealed partial class MainWindow:Window
         ask.Children.Add(candidateBox);pages["ask"]=Scroll(ask);
 
         var results=Panel();results.Children.Add(Card("带来源的整理结果",Label("结论均为待核实候选。原文只以文本显示，正文中的命令与链接不会执行。发送前请核对接收群、正文、范围和不完整提示。")));
-        results.Children.Add(Label("保存的历史结果可直接查看与导出。人工确认仅影响当前预览及其导出，不更新历史文件；重新打开历史仍需重新核实。"));
+        results.Children.Add(Label("人工核实与撤销加密保存在本机，重开同一报告可恢复。确认仅适用于该报告引用的原文修订；证据变化或过期后失效。旧版纯文本历史仍可查看与导出。"));
         results.Children.Add(history);results.Children.Add(reportBox);results.Children.Add(issuePicker);
-        results.Children.Add(Row(Action("复核证据并确认解决","confirm-resolved",ConfirmResolvedAsync),Action("导出 Markdown…","export-report",ExportAsync),Action("预览并发送一次…","preview-send",SendAsync)));
+        results.Children.Add(Row(Action("复核证据并确认解决","confirm-resolved",ConfirmResolvedAsync),Action("撤销当前人工确认","reopen-resolved",ReopenResolvedAsync)));
+        results.Children.Add(Row(Action("导出 Markdown…","export-report",ExportAsync,reviewRecovery:true),Action("预览并发送一次…","preview-send",SendAsync)));
         pages["results"]=Scroll(results);
 
         var settings=Panel();settings.Children.Add(Card("数据连接",Stack(source,dwsPath,profile,conversation,conversations,Action("列出时间范围内的会话…","discover",DiscoverAsync))));
         settings.Children.Add(Card("模型与费用上限",Stack(modelName,inputRate,outputRate,dailyBudget,dailyRequests,outputCap,Label("默认低价模型的单价参考 2026-11-06 官方价目。单价可修改，请与实际模型核对。每次请求前保守预留费用，不因失败或重启返还；这是本应用的本机限额，不包含其他应用用量，也不是平台账单保证。"))));
         settings.Children.Add(Card("本机与外观",Stack(theme,retention,Label("修改保留天数在保存普通设置或确认开始真实监控后生效；缩短会立即清理到期正文及含其引用的结果。"),Action("保存普通设置","save-settings",SaveSettingsAsync))));
         settings.Children.Add(Card("仅在本机 Windows 加密保存",Stack(apiKey,webhookName,webhookUrl,webhookSecret,Label("已保存的秘密不回显。DWS 登录由官方 CLI 独立管理。密钥创建仍通过安全设置流程，不要粘贴到聊天或仓库。"),Row(Action("确认并保存凭据…","save-credentials",SaveCredentialsAsync),Action("移除本应用凭据…","clear-credentials",ClearCredentialsAsync)))));
-        settings.Children.Add(Action("删除本机消息与结果索引…","clear-index",ClearIndexAsync));
+        settings.Children.Add(Action("删除本机消息与结果索引…","clear-index",ClearIndexAsync,reviewRecovery:true));
         settingsPage=Scroll(settings);pages["settings"]=settingsPage;
         var help=Panel();help.Children.Add(Card("接入条件",Label("1. 独立安装官方 DWS，并在自己的电脑完成 dws auth login。企业未开通 CLI 时仍需管理员授权。\n2. 用 dws profile list 核对 corpId:userId；把明确身份与会话 ID 配置到本应用。\n3. 首先用一个会话与短时间范围核对消息数、时间和内容。\n4. 确认公司政策允许后，再配置新应用专用 OpenAI 密钥并开启上传。开发测试无需真实密钥。")));
         help.Children.Add(Card("首版的范围",Label("支持登录用户会话中的托盘持续检查和明确选择的启动后恢复、本机加密消息索引、断点追赶、关键词搜索、候选整理、人工核实、导出与手动 Webhook。\n关闭到托盘和重启恢复分别明确授权；通知区域失效时保持或恢复窗口。应用必须由已登录用户手动打开。暂不提供 Windows 服务、开机自启动、实时事件订阅、自动更新或附件正文解析。轮询可能漏掉查询窗口外的编辑、撤回或平台不可见历史；这类内容必须回钉钉核实。\n缺页、解析失败和授权失败暂停。仅明确可重试的 DWS 故障有界退避；预算耗尽时保留候选并继续采集，模型等下个 UTC 日；未知模型结果保留费用与尝试并暂停 AI，不跨过未知缺口。单次读取最多 1000 条，密集会话请缩小起始范围。\n消息默认保留 30 天，最大 50000 条；加密状态上限 32 MiB。超限会暂停，不静默丢弃。最近保留 100 份结果。\nWebhook 超时会标为结果不确定，先检查钉钉再决定重试。")));
-        help.Children.Add(Card("本机数据位置",Label(dataRoot+"\nstate.dpapi：消息、断点、尝试记录、费用预留和结果。\ncredentials.dpapi：本应用凭据。\nsend-attempts.dpapi：仅保存发送目标与正文摘要及尝试状态，不自动重发。\nsettings.json：不含密钥的普通设置。\nWindows DPAPI 仅保护静态文件；同一 Windows 用户下的恶意进程不在本应用隔离能力内。")));
+        help.Children.Add(Card("本机数据位置",Label(dataRoot+"\nstate.dpapi：消息、断点、尝试记录、费用预留和结果。\ncredentials.dpapi：本应用凭据。\nsend-attempts.dpapi：仅保存发送目标与正文摘要及尝试状态，不自动重发。\nreport-reviews.dpapi：证据快照与人工核实/撤销，备份交接时保留。\nsettings.json：不含密钥的普通设置。\nWindows DPAPI 仅保护静态文件；同一 Windows 用户下的恶意进程不在本应用隔离能力内。")));
         pages["help"]=Scroll(help);
     }
 
@@ -138,7 +140,7 @@ public sealed partial class MainWindow:Window
         var scope=new QueryScope(profile.Text.Trim(),conversation.Text.Trim(),from,to);
         if(monitoring)scope.ValidateOrigin();else scope.Validate();return scope;
     }
-    void EnforceRetention()
+    void EnforceRetention(bool allowReviewReadOnly=false)
     {
         var previousReports=state.Reports;
         state.Trim(DateTimeOffset.UtcNow,state.RetentionDays);
@@ -146,9 +148,11 @@ public sealed partial class MainWindow:Window
         if(candidates is not null&&candidates.Messages.Any(m=>m.CreatedAt<state.RetentionCutoff)){candidates=null;candidateBox.Text="候选正文已到保留期，请重新读取或搜索。";}
         if((currentReport is not null&&currentReport.Batch.Messages.Any(m=>m.CreatedAt<state.RetentionCutoff))
             ||(displayedSavedReport is not null&&!state.Reports.Contains(displayedSavedReport)))
-        {currentReport=null;displayedSavedReport=null;markdown="";reportBox.Text="结果引用的来源已到保留期，已清理当前预览。";issuePicker.ItemsSource=null;}
+        {currentReport=null;review=null;displayedSavedReport=null;markdown="";reportBox.Text="结果引用的来源已到保留期，已清理当前预览。";issuePicker.ItemsSource=null;}
         if(!state.Reports.SequenceEqual(previousReports))RefreshHistory();
-        store.Save(state);
+        try{store.Save(state);}
+        catch(MonitoringFault fault)when(allowReviewReadOnly&&fault.Category==MonitorFailure.Storage&&store.ReviewMaintenanceBlocked){}
+        RefreshReview();
     }
     static DateTimeOffset ParseTime(string text)
     {
@@ -160,11 +164,11 @@ public sealed partial class MainWindow:Window
         var model=new ModelSettings{Model=modelName.Text.Trim(),InputUsdPerMillion=Parse(inputRate.Text),OutputUsdPerMillion=Parse(outputRate.Text),DailyBudgetUsd=Parse(dailyBudget.Text),MaxRequestsPerDay=(int)dailyRequests.Value,MaxOutputTokens=(int)outputCap.Value};model.Validate();return model;
     }
     DwsClient Dws()=>new(dwsPath.Text.Trim(),gate);
-    async Task Run(Func<Task> action,bool quiet=false,bool monitorTick=false)
+    async Task Run(Func<Task> action,bool quiet=false,bool monitorTick=false,bool reviewRecovery=false)
     {
         if(!await operations.WaitAsync(0)){if(!quiet)StatusText.Text="已有操作正在执行，请稍后再试。";return;}
         active=new CancellationTokenSource();if(settingsPage is not null)settingsPage.IsEnabled=false;since.IsEnabled=false;interval.IsEnabled=false;enableAi.IsEnabled=false;closeToTray.IsEnabled=false;saveRecovery.IsEnabled=false;BusyBar.Visibility=Visibility.Visible;foreach(var button in actions)button.IsEnabled=false;
-        try{EnforceRetention();await action();EnforceRetention();}
+        try{EnforceRetention(reviewRecovery);await action();EnforceRetention(reviewRecovery);}
         catch(SafetyException e){StatusText.Text=e.Message;if(monitorTick)await StopMonitoringAsync(false);}
         catch(OperationCanceledException){StatusText.Text="操作已停止；已有断点和费用预留保留。";}
         catch(Exception){StatusText.Text="操作未完成，未展示服务响应或凭据。请检查本机配置与可用空间。";if(monitorTick)await StopMonitoringAsync(false);}
@@ -216,7 +220,7 @@ public sealed partial class MainWindow:Window
     void SetCandidates(MessageBatch batch)
     {
         candidates=batch.Messages.Count>40?batch with{Messages=batch.Messages.Take(40).ToArray(),Complete=false,Warnings=batch.Warnings.Concat(["模型候选仅取本次最早 40 条，请缩小范围或另行查询余下内容。"]).ToArray()}:batch;
-        currentReport=null;displayedSavedReport=null;markdown="";reportBox.Text="";issuePicker.ItemsSource=null;
+        currentReport=null;review=null;displayedSavedReport=null;markdown="";reportBox.Text="";issuePicker.ItemsSource=null;
         candidateBox.Text=candidates.Scope.Display+"\n\n"+string.Join("\n\n",candidates.Messages.Select(m=>$"[{m.MessageId}] {m.CreatedAt:yyyy-MM-dd HH:mm:ss zzz} {m.Sender}\n{m.Text}"))+"\n\n"+string.Join("\n",candidates.Warnings);
     }
     async Task AnalyzeCandidatesAsync()
@@ -230,7 +234,7 @@ public sealed partial class MainWindow:Window
             key=vault.Read().OpenAiKey;if(string.IsNullOrWhiteSpace(key))throw new SafetyException("请先在设置中配置本应用的专用 OpenAI 密钥。");
         }
         var result=await engine.AnalyzeOnceAsync(batch,task,model,Analyzer(batch.IsDemo,key,model),DateTimeOffset.UtcNow,ActiveToken);
-        SetReport(result.Report);Navigate("results");StatusText.Text="整理完成，候选结论与证据请逐项核实。";
+        var archived=SetReport(result.Report);Navigate("results");StatusText.Text=archived?"整理完成，候选结论与证据请逐项核实。":ReviewStorageNotice;
     }
     Func<MessageBatch,string,CancellationToken,Task<ModelResult>> Analyzer(bool demo,string key,ModelSettings model)=>
         demo?(b,t,_)=>Task.FromResult(new ModelResult(Demo.Analyze(b,t),0,0)):
@@ -241,7 +245,6 @@ public sealed partial class MainWindow:Window
         if(startButton is not null)startButton.IsEnabled=!running&&!exiting;if(stopButton is not null)stopButton.IsEnabled=running||active is not null;
         if(settingsPage is not null)settingsPage.IsEnabled=!running;since.IsEnabled=!running;interval.IsEnabled=!running;enableAi.IsEnabled=!running;closeToTray.IsEnabled=!running;saveRecovery.IsEnabled=!running;
     }
-    void SetReport(AnalysisReport report){currentReport=report;displayedSavedReport=null;markdown=ReportRenderer.Markdown(report);displayedDemo=report.Batch.IsDemo;reportBox.Text=markdown;issuePicker.ItemsSource=report.Issues;if(report.Issues.Count>0)issuePicker.SelectedIndex=0;RefreshHistory(clearSelection:true);}
     void RefreshHistory(bool clearSelection=false)
     {
         var selected=clearSelection?null:(history.SelectedItem as HistoryItem)?.Report;
@@ -258,31 +261,24 @@ public sealed partial class MainWindow:Window
         if(refreshingHistory||history.SelectedItem is not HistoryItem item)return;
         try
         {
-            EnforceRetention();
+            EnforceRetention(allowReviewReadOnly:true);
             if(!state.Reports.Contains(item.Report)){RefreshHistory();return;}
-            currentReport=null;displayedSavedReport=item.Report;markdown=item.Report.Markdown;displayedDemo=item.Report.IsDemo;
-            reportBox.Text=markdown;issuePicker.ItemsSource=null;
+            ApplyReview(store.ReviewsAvailable?store.Reviews.OpenReadable(state,item.Report):ReportReviewView.Legacy(item.Report,unavailable:true));
+            StatusText.Text=review!.Unavailable?"核实文件暂不可用，已保留原文件并仅载入原始报告文本；可检查存储或明确清理索引。":review.Report is null?"旧历史仅保留原 Markdown，没有可持久核实的证据快照。":review.CanReview?"已载入历史及本机人工核实记录。":"证据已修订或缺失，原人工核实记录已失效。";
         }
         catch(Exception e)
         {
             // Viewing history is a manual action: storage failure must not escape XAML or stop monitoring.
-            currentReport=null;displayedSavedReport=null;markdown="";reportBox.Text="历史结果未能载入，请检查本机存储后重新选择。";issuePicker.ItemsSource=null;
+            currentReport=null;review=null;displayedSavedReport=null;markdown="";reportBox.Text="历史结果未能载入，请检查本机存储后重新选择。";issuePicker.ItemsSource=null;
             RefreshHistory(clearSelection:true);
             StatusText.Text=e is SafetyException?e.Message:"历史结果未能载入；未展示服务响应或凭据，请检查本机存储。";
         }
-    }
-    async Task ConfirmResolvedAsync()
-    {
-        var report=currentReport??throw new SafetyException("历史文本不可直接改变状态，请重新核对当前结构化结果。");var index=issuePicker.SelectedIndex;
-        if(index<0)throw new SafetyException("请选择当前需要人工核实的问题。");var issue=report.Issues[index];
-        if(!await Confirm("人工确认解决",issue.Title+"\n\n"+string.Join("\n\n",issue.Evidence.Select(e=>$"{e.Message.MessageId} / {e.Message.CreatedAt:O}\n{e.Quote}"))+"\n\n仅在你已回原会话确认验证结果与验收范围后继续。提交修复或有人回复本身不足以确认解决。","我已核实，确认解决"))return;
-        EnforceRetention();if(currentReport!=report)throw new SafetyException("来源已到保留期，请重新读取。");report.ConfirmResolved(index,true);SetReport(report);StatusText.Text="当前预览已标为人工确认；此标记未写入历史，当前预览可单独导出或发送。";
     }
     async Task ExportAsync()
     {
         if(markdown.Length==0)throw new SafetyException("还没有可导出的结果。");
         var picker=new FileSavePicker{SuggestedFileName="dingtalk-insights-"+DateTime.Now.ToString("yyyyMMdd-HHmm")};picker.FileTypeChoices.Add("Markdown",new[]{".md"});
-        WinRT.Interop.InitializeWithWindow.Initialize(picker,WinRT.Interop.WindowNative.GetWindowHandle(this));var file=await picker.PickSaveFileAsync();if(file is not null){EnforceRetention();if(markdown.Length==0)throw new SafetyException("来源已到保留期，结果已清理；本次未导出。");await File.WriteAllTextAsync(file.Path,markdown,new UTF8Encoding(false));StatusText.Text="结果已导出到所选位置；导出文件含正文，请按公司政策保管。";}
+        WinRT.Interop.InitializeWithWindow.Initialize(picker,WinRT.Interop.WindowNative.GetWindowHandle(this));var file=await picker.PickSaveFileAsync();if(file is not null){EnforceRetention(allowReviewReadOnly:true);if(markdown.Length==0)throw new SafetyException("来源已到保留期，结果已清理；本次未导出。");await File.WriteAllTextAsync(file.Path,markdown,new UTF8Encoding(false));StatusText.Text="结果已导出到所选位置；导出文件含正文，请按公司政策保管。";}
     }
     async Task SendAsync()
     {
@@ -303,6 +299,7 @@ public sealed partial class MainWindow:Window
     }
     void RefreshStatus()
     {
+        RefreshReview();
         monitorSummary.Text=$"本机索引：{state.Messages.Count} 条 · 断点：{state.Watermarks.Count} 个会话 · 保存结果：{state.Reports.Count} 份\n最近采集回执：{state.Receipts.Count} 份，其中 {state.Receipts.Count(r=>!r.Complete)} 份不完整；原始元数据仅在本机加密保存。\n{(monitorCancellation is not null?"当前监控运行中":"监控尚未启动或已停止")}\n{MonitorNotices.For(state.Supervisor.Failure)}\n下次检查：{state.Supervisor.NextReadAt?.ToLocalTime().ToString("O")??"无"} · 模型延后至：{state.Supervisor.ModelDeferredUntil?.ToString("O")??"无"}\n已保存重启恢复：{(state.Recovery is not null&&!state.UserStopped?"是（仍需逐次核对配置和就绪状态）":"否")} · 最近完整进度：{state.Supervisor.LastCompletedAt?.ToString("O")??"无"}";
         budgetSummary.Text=$"费用日：{(state.BudgetDay.Length==0?"尚无真实模型请求":state.BudgetDay+" UTC")} · 已预留 USD {state.ReservedUsd:F6} · 请求 {state.Requests} 次\n模型已返回用量：输入 {state.InputTokens} / 输出 {state.OutputTokens} tokens。失败与结果不明的预留保留，不自动重试同一修订。";
     }
@@ -341,9 +338,9 @@ public sealed partial class MainWindow:Window
         BackgroundPolicy.Revoke(state);store.Save(state);vault.Save(next);apiKey.Password="";webhookUrl.Password="";webhookSecret.Password="";await SaveSettingsAsync();StatusText.Text="凭据已在本机加密保存，未测试或请求真实服务。";
     }
     async Task ClearCredentialsAsync(){if(await Confirm("移除本应用凭据","删除本应用保存的加密凭据文件。不会注销 DWS，也不会撤销 OpenAI 平台密钥；如需撤销，请在对应平台操作。","移除本机凭据")){BackgroundPolicy.Revoke(state);store.Save(state);vault.Clear();apiKey.Password="";webhookUrl.Password="";webhookSecret.Password="";StatusText.Text="已移除本应用的本机凭据文件。";}}
-    async Task ClearIndexAsync(){if(await Confirm("删除本机消息和结果索引","删除本应用的消息、断点、尝试记录与结果；当日费用预留、请求数与发送尝试保留，避免清理后绕过预算或重复发送。不会影响钉钉原始聊天。","删除本机索引")){state.ClearIndex();store.Save(state);candidates=null;currentReport=null;displayedSavedReport=null;markdown="";candidateBox.Text="";reportBox.Text="";issuePicker.ItemsSource=null;RefreshHistory();StatusText.Text="本机索引已清理，当日费用预留保留。";}}
+    async Task ClearIndexAsync(){if(await Confirm("删除本机消息和结果索引","删除本应用的消息、断点、尝试记录、结果与人工核实；当日费用预留、请求数与发送尝试保留，避免清理后绕过预算或重复发送。不会影响钉钉原始聊天。","删除本机索引")){candidates=null;currentReport=null;review=null;displayedSavedReport=null;markdown="";candidateBox.Text="";reportBox.Text="";issuePicker.ItemsSource=null;store.ClearIndex(state);RefreshHistory();StatusText.Text="本机索引与人工核实已清理，当日费用预留保留。";}}
 
-    Button Action(string text,string id,Func<Task> handler){var button=new Button{Content=text};AutomationProperties.SetAutomationId(button,id);button.Click+=async(_,_)=>await Run(handler);actions.Add(button);return button;}
+    Button Action(string text,string id,Func<Task> handler,bool reviewRecovery=false){var button=new Button{Content=text};AutomationProperties.SetAutomationId(button,id);button.Click+=async(_,_)=>await Run(handler,reviewRecovery:reviewRecovery);actions.Add(button);return button;}
     static StackPanel Panel()=>new(){Spacing=18,Padding=new Thickness(0,0,4,16)};
     static TextBlock Label(string text)=>new(){Text=text,TextWrapping=TextWrapping.Wrap,LineHeight=23};
     static StackPanel Stack(params UIElement[] elements){var panel=new StackPanel{Spacing=12};foreach(var e in elements)panel.Children.Add(e);return panel;}

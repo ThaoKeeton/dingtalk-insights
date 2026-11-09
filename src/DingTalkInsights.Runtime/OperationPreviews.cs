@@ -3,6 +3,18 @@ using DingTalkInsights.Core;
 namespace DingTalkInsights.Runtime;
 
 internal sealed record PreviewAuthority(Guid Id,string Owner,long Generation,int RetentionDays,DateTimeOffset CreatedAt,DateTimeOffset ExpiresAt,CredentialUse Use,string CredentialRevision);
+public sealed class ResolutionPreview
+{
+    internal ResolutionPreview(PreviewAuthority authority,ReportReviewView view,int index,bool resolved)
+    {Authority=authority;View=view;Index=index;Resolved=resolved;Evidence=Array.AsReadOnly(view.Report!.Issues[index].Evidence.ToArray());}
+    internal PreviewAuthority Authority{get;}
+    internal ReportReviewView View{get;}
+    public int Index{get;}
+    public bool Resolved{get;}
+    public string Title=>View.Report!.Issues[Index].Title;
+    public string Markdown=>View.Markdown;
+    public IReadOnlyList<Evidence> Evidence{get;}
+}
 public sealed class MonitoringPreview
 {
     internal MonitoringPreview(PreviewAuthority authority,MonitoringRequest request,QueryScope next,DateTimeOffset? covered,CoveredRange? abandoned,int messages,int reports,bool retained)

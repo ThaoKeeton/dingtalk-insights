@@ -14,14 +14,18 @@ public sealed class EncryptedStateStore : IStateStore,IDisposable
 {
     readonly string path;readonly IDataCipher cipher;readonly FileStream processLock;
     readonly TimeProvider clock;readonly int? startupRetentionDays;
-    public EncryptedStateStore(string path,IDataCipher cipher,TimeProvider? clock=null,int? startupRetentionDays=null)
+    readonly Action<InsightState,bool>? beforePersist;
+    public EncryptedStateStore(string path,IDataCipher cipher,TimeProvider? clock=null,int? startupRetentionDays=null,Action<InsightState,bool>? beforePersist=null)
     {
-        this.clock=clock??TimeProvider.System;this.startupRetentionDays=startupRetentionDays;
+        this.clock=clock??TimeProvider.System;this.startupRetentionDays=startupRetentionDays;this.beforePersist=beforePersist;
         this.path=Path.GetFullPath(path);this.cipher=cipher;Directory.CreateDirectory(Path.GetDirectoryName(this.path)!);
         try{processLock=new FileStream(this.path+".lock",FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);}
         catch(IOException){throw new SafetyException("本机数据正在被另一个应用实例使用。");}
     }
-    public InsightState Load()
+    public InsightState Load()=>Read(persist:true);
+    /// <summary>Retained in-memory view for optional-archive recovery. Never rewrites the canonical file.</summary>
+    public InsightState ReadRetained()=>Read(persist:false);
+    InsightState Read(bool persist)
     {
         if(!File.Exists(path))
         {
@@ -31,14 +35,22 @@ public sealed class EncryptedStateStore : IStateStore,IDisposable
         {
             if(new FileInfo(path).Length>32*1024*1024)throw new SafetyException("本机加密数据超过 32 MiB，请先备份和调整保留范围。");
             var plain=cipher.Unprotect(File.ReadAllBytes(path));
-            try{var state=JsonSerializer.Deserialize<InsightState>(plain)??throw new SafetyException("数据为空。");state.Validate();state.Trim(clock.GetUtcNow(),startupRetentionDays??state.RetentionDays);Save(state);return state;}
+            try
+            {
+                var state=JsonSerializer.Deserialize<InsightState>(plain)??throw new SafetyException("数据为空。");state.Validate();
+                if(persist){state.RetentionDays=startupRetentionDays??state.RetentionDays;Save(state);}
+                else state.Trim(clock.GetUtcNow(),startupRetentionDays??state.RetentionDays);
+                return state;
+            }
             finally{CryptographicOperations.ZeroMemory(plain);}
         }
         catch(Exception e)when(e is not SafetyException){throw new SafetyException("本机数据无法解密或格式无效。已保留原文件，未自动覆盖。");}
     }
     public void Save(InsightState state)
     {
-        state.Trim(clock.GetUtcNow(),state.RetentionDays);state.Validate();byte[] plain=JsonSerializer.SerializeToUtf8Bytes(state);string temp=path+"."+Guid.NewGuid()+".tmp";
+        var messages=state.Messages.Count;var reports=state.Reports.Count;
+        state.Trim(clock.GetUtcNow(),state.RetentionDays);state.Validate();beforePersist?.Invoke(state,state.Messages.Count<messages||state.Reports.Count<reports);
+        byte[] plain=JsonSerializer.SerializeToUtf8Bytes(state);string temp=path+"."+Guid.NewGuid()+".tmp";
         try
         {
             if(plain.Length>30*1024*1024)throw new SafetyException("本机数据接近 32 MiB 上限，请调整消息保留时间后继续。");

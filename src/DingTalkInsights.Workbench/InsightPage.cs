@@ -69,9 +69,10 @@ internal sealed class InsightPage:UserControl
         Add(Action("读取一次…","DTI 读取一次",Read),Action("预览并开始监控…","DTI 开始监控",Begin,out begin),Action("停止并等待退役","DTI 停止监控",async()=>{await Work((session.Monitoring??throw new RuntimeFault(RuntimeFailure.Inactive)).StopAsync);},stop:true));
         Add(keywords,dwsSearch,Action("搜索…","DTI 搜索",Search));
         Add(candidates,Action("预览并整理候选…","DTI 整理候选",Analyze),report);
-        Add(issue,Action("复核证据并确认解决…","DTI 人工确认解决",Resolve),Action("复制 Markdown","DTI 复制 Markdown",Copy));
-        Add(history);history.SelectionChanged+=async(_,_)=>await Safe(async()=>
-        {if(!rendering&&history.SelectedItem is HistoryRow selected)await Work(()=>controller.SelectHistoryAsync(selected.Value));});
+        body.Children.Add(Text("人工核实及撤销加密保存到此报告，重开历史可恢复；原文修订或过期后失效。旧版纯文本历史可查看与复制。"));
+        Add(issue,Action("复核证据并确认解决…","DTI 人工确认解决",()=>Resolve(true)),Action("撤销此项人工确认…","DTI 撤销人工确认",()=>Resolve(false)),Action("复制 Markdown","DTI 复制 Markdown",Copy));
+        Add(history);history.SelectionChanged+=async(_,_)=>
+        {if(!rendering&&history.SelectedItem is HistoryRow selected)await Safe(async()=>{await Work(()=>controller.SelectHistoryAsync(selected.Value));});};
         Add(Action("预览人工发送…","DTI 人工发送",Send));
     }
     void BuildSettings()
@@ -92,7 +93,7 @@ internal sealed class InsightPage:UserControl
         Add(key,webhook,secret,Action("加密保存新输入凭据…","DTI 保存新凭据",SaveCredentials));
         Add(Action("删除所选来源的凭据…","DTI 删除所选凭据",DeleteCredentials));
         Add(Action("清理本机内容索引…","DTI 清理索引",async()=>
-        {if(await Confirm("清理索引","仅清理当前连接的本机消息、结果与断点；当日预算、请求和发送尝试保留。不会修改钉钉原始聊天。"))await Work(()=>controller.ClearIndexAsync(true));}));
+        {if(await Confirm("清理索引","清理当前连接的本机消息、结果、断点及全部人工核实，解除核实文件的失效屏障；当日预算、请求和发送尝试保留。不会修改钉钉原始聊天。"))await Work(()=>controller.ClearIndexAsync(true));}));
         body.Children.Add(Text("帮助与限制",20));
         body.Children.Add(Text("监控为官方 DWS 会话消息轮询，不是桌面捕获。只读模式不调用模型；未知/不完整来源不会推进完整断点。模型失败、预算延后、权限和迁移失败均显示安全类别。关闭/睡眠/注销期间不保证实时采集。宿主 0.2 注册一个须经插件预览确认的监控任务，不允许宿主通用开始或自动恢复。停止监控保留明确连接与已批准用途；撤销凭据用途会停止所有工作并保留账本；停用/退出彻底退役，再次开始须新确认。宿主凭据不可用时须显式选择其他来源，不自动切换。宿主包服务须重启前维护；程序集保持加载至退出。人工 Webhook 结果不确定时不自动重发，重发可能重复。费用单价是用户输入的本地估算，不是实时报价。"));
     }
@@ -181,14 +182,13 @@ internal sealed class InsightPage:UserControl
         if(await Confirm(preview.Batch.IsDemo?"模拟整理预览（不联网）":"上传模型预览",
             $"精确范围：{preview.Batch.Scope.Display}\n模型 {preview.Model.Model}；预估上限预留 ${F(OpenAiClient.Reservation(exact,preview.Model))}；UTC 日预算 ${F(preview.Model.DailyBudgetUsd)} / {preview.Model.MaxRequestsPerDay} 请求\n以下为本次固定请求正文，确认后使用同一预览：\n{exact}"))await Work(()=>controller.AnalyzeCandidatesAsync(preview,true));
     }
-    async Task Resolve()
+    async Task Resolve(bool resolved)
     {
-        var index=(int)issue.Value-1;var approved=controller.Snapshot.Markdown;
-        if(await Confirm("复核原文证据",$"问题序号：{index+1}\n确认你已回原会话核对证据及解决结果；修复提交或有人回复不等于解决。\n{approved}"))
-        {
-            if(controller.Snapshot.Markdown!=approved)throw new RuntimeFault(RuntimeFailure.Configuration);
-            await Work(()=>controller.ConfirmResolvedAsync(index,true));
-        }
+        var preview=await Work(()=>controller.PreviewResolutionAsync((int)issue.Value-1,resolved));if(preview is null)return;
+        var evidence=string.Join("\n\n",preview.Evidence.Select(e=>$"{e.Message.MessageId} / {e.Message.CreatedAt:O}\n{e.Quote}"));
+        var instruction=resolved?"确认你已回原会话核对证据及解决结果；修复提交或有人回复不等于解决。":"撤销此报告该项人工确认，恢复原报告的待核实状态。本次不调用模型或修改其他报告。";
+        if(await Confirm(resolved?"复核原文证据":"撤销人工确认",$"问题 {preview.Index+1}：{preview.Title}\n{instruction}\n{evidence}"))
+            await Work(()=>controller.ConfirmResolvedAsync(preview,true));
     }
     Task Copy()
     {

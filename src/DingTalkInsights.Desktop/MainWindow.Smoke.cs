@@ -5,6 +5,8 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
@@ -24,7 +26,8 @@ public sealed partial class MainWindow
             Check(IsDemo&&monitorCancellation is null,"safe-default-no-monitor");
             if(Environment.GetCommandLineArgs().Contains("--smoke-restore"))
             {
-                Check(history.Items.Count>0&&currentReport is null&&markdown.Contains("demo-2"),"restart-history-ready-without-model");
+                Check(history.Items.Count>0&&currentReport is not null&&review?.CanReview==true&&markdown.Contains("demo-2"),"restart-history-ready-without-model");
+                Check(markdown.Contains("人工确认已解决")&&currentReport!.Issues[0].HumanConfirmed,"restart-durable-human-confirmation-no-new-model");
                 Check(!state.Messages.Values.Any(m=>m.Message.MessageId=="expired-smoke-message")&&!state.Reports.Any(r=>r.Task=="EXPIRED_SMOKE_REPORT"),"restart-retention-before-use");
                 Check(state.Receipts.Any(r=>!r.Complete&&r.Ledger.ContainsKey("syntheticLimit"))&&!monitorSummary.Text.Contains("SYNTHETIC_LIMIT"),"restart-collection-limitations-safe-summary");
                 File.WriteAllText(Path.Combine(output,"restored-report.md"),markdown);
@@ -49,6 +52,21 @@ public sealed partial class MainWindow
             Check(currentReport?.Issues.Count==2&&reportBox.Text.Contains("demo-2"),"native-analyze-evidence");
             Check(currentReport!.Issues.All(i=>i.Status==IssueStatus.PendingVerification),"no-automatic-resolution");
             Check(state.ReservedUsd==0&&state.Requests==0,"demo-no-api-spend");
+            await InvokeReviewAsync("confirm-resolved",false);
+            Check(!currentReport.Issues[0].HumanConfirmed,"native-review-cancel-no-certainty");
+            using(var blockedReview=new FileStream(Path.Combine(dataRoot,"report-reviews.dpapi"),FileMode.Open,FileAccess.Read,FileShare.Read))
+            {
+                await InvokeReviewAsync("confirm-resolved",true);
+                Check(!currentReport.Issues[0].HumanConfirmed&&!markdown.Contains("人工确认已解决"),"native-review-save-failure-no-false-success");
+            }
+            await InvokeReviewAsync("confirm-resolved",true);
+            Check(currentReport.Issues[0].HumanConfirmed&&markdown.Contains("人工确认已解决"),"native-review-confirm-saved");
+            history.SelectedIndex=0;
+            Check(currentReport.Issues[0].HumanConfirmed,"native-review-history-retains-confirmation");
+            await InvokeReviewAsync("reopen-resolved",true);
+            Check(!currentReport.Issues[0].HumanConfirmed&&markdown.Contains("已撤销"),"native-review-revoke-saved");
+            await InvokeReviewAsync("confirm-resolved",true);
+            Check(store.Reviews.Open(state,review!.Saved).Report!.Issues[0].HumanConfirmed,"native-review-dpapi-roundtrip");
             await CaptureAsync("results.png");
             File.WriteAllText(Path.Combine(output,"sample-report.md"),reportBox.Text);
             var restored=store.Load();Check(restored.Messages.Count==4&&restored.Attempted.Count==4,"encrypted-state-roundtrip");
@@ -215,6 +233,19 @@ public sealed partial class MainWindow
         var timeout=DateTimeOffset.UtcNow.AddSeconds(20);
         while(operations.CurrentCount==0&&DateTimeOffset.UtcNow<timeout)await Task.Delay(25);
         if(operations.CurrentCount==0)throw new SafetyException("Native operation timed out: "+id);
+    }
+    async Task InvokeReviewAsync(string id,bool approve)
+    {
+        Invoke(actions.Single(b=>AutomationProperties.GetAutomationId(b)==id));
+        await AwaitSmokeCondition(()=>activeDialog is not null&&SmokeDescendants<Button>(activeDialog).Any(b=>Equals(b.Content,approve?activeDialog.PrimaryButtonText:activeDialog.CloseButtonText)));
+        var dialog=activeDialog!;
+        Invoke(SmokeDescendants<Button>(dialog).Single(b=>Equals(b.Content,approve?dialog.PrimaryButtonText:dialog.CloseButtonText)));
+        await AwaitSmokeCondition(()=>activeDialog is null&&operations.CurrentCount==1);
+    }
+    static IEnumerable<T> SmokeDescendants<T>(DependencyObject root)where T:DependencyObject
+    {
+        if(root is T item)yield return item;
+        for(var i=0;i<VisualTreeHelper.GetChildrenCount(root);i++)foreach(var child in SmokeDescendants<T>(VisualTreeHelper.GetChild(root,i)))yield return child;
     }
     async Task CaptureAsync(string filename)
     {

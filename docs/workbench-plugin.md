@@ -1,4 +1,4 @@
-# Workbench native plugin 0.3.2
+# Workbench native plugin 0.3.3
 
 The installable DLL plugin ID is `com.projectworkbench.dingtalk-insights`, entry `DingTalkInsights.Workbench.InsightPlugin`. It targets .NET 10 / Windows 10 SDK 19041 / x64 with WindowsAppSDK **1.8.260921001**, API **1**, runtime services **1**, minimum host **0.2.0**. The maintained standalone stays v0.2 / .NET 8 / its existing AppSDK pin.
 
@@ -49,3 +49,5 @@ Read/analysis acceptance waits for the current named page action to finish **and
 Local0.3.2 verification passes200 portable tests and48 bridge/real-Manager checks, including async UTC/retention boundaries after credential preparation. Native acceptance adds synthetic host-DPAPI save/cancel/approve/revoke/delete before the full lifecycle/package/re-extracted matrix. Exact44-input checkout, package, Windows and whole-branch review results and commands: [continuation verification](workbench-validation-2026-11-06.md).
 
 Windows11 24H2 keyboard/theme/DPI/visual/screen-reader, unchanged shipping EXE and multiday acceptance remain separate. No real chats, credentials, enterprise/model APIs or Webhook sends are used; future real-interface testing must also exclude Webhook and DingTalk sends. See [the manual record](workbench-native-manual.md).
+
+Version0.3.3 adds [persistent human verification](durable-review.md) shared with standalone0.2.1. SDK/host pins and network authority remain as above. Historical0.3.2 validation is unchanged; fresh exact-commit validation is recorded in the new feature document.

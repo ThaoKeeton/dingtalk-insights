@@ -160,8 +160,8 @@ public sealed partial class MainWindow
         current.Changed+=result=>
         {
             if(!ReferenceEquals(supervisor,current))return;
-            if(result?.Report is {} report)SetReport(report);
-            RefreshStatus();StatusText.Text=current.Notice;UpdateMonitorControls();
+            var archived=result?.Report is not {} report||SetReport(report);
+            RefreshStatus();StatusText.Text=archived?current.Notice:ReviewStorageNotice;UpdateMonitorControls();
             if(state.Supervisor.Status==MonitorStatus.NeedsAttention)ShowMainWindow();
         };
         var started=await current.StartAsync(config,confirmed:!recover,recover:recover,cancellation:cancellation);
@@ -182,6 +182,12 @@ public sealed partial class MainWindow
     async Task RecoverOnLaunchCoreAsync(HostStartup startup)
     {
         if(smoke||state.Recovery is null||state.UserStopped)return;
+        if(ReviewRecoveryBlocked)
+        {
+            source.SelectedIndex=0;state.Supervisor=state.Supervisor with{Status=MonitorStatus.NeedsAttention,Failure=MonitorFailure.Storage};
+            StatusText.Text="本机核实清理未完成，仅能查看保留期内原始历史；本次没有读取凭据或检查 DWS。请检查存储或明确清理索引。";
+            ShowMainWindow();RefreshStatus();return;
+        }
         try
         {
             if(!File.Exists(Path.Combine(dataRoot,"settings.json")))throw new MonitoringFault(MonitorFailure.Configuration);

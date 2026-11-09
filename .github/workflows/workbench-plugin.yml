@@ -1,7 +1,7 @@
 name: Workbench native plugin acceptance
 on:
   push:
-    branches: [main, 'codex/workbench-plugin']
+    branches: [main, 'codex/workbench-plugin', 'codex/durable-review']
   pull_request:
     branches: [main]
   workflow_dispatch:
