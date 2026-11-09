@@ -10,15 +10,20 @@ public sealed partial class InsightController
     {
         foreach(var expired in previews.Where(p=>p.Value.ExpiresAt<clock.UtcNow).Select(p=>p.Key).ToArray())previews.Remove(expired);
         if(previews.Count>=128)throw new RuntimeFault(RuntimeFailure.Busy);
-        var authority=new PreviewAuthority(Guid.NewGuid(),ownerContext,generation,state.RetentionDays,clock.UtcNow,clock.UtcNow.AddMinutes(5),use,use==CredentialUse.None?"":BoundCredentialRevision(use));
+        var authority=new PreviewAuthority(Guid.NewGuid(),ownerContext,generation,draftRevision,state.RetentionDays,clock.UtcNow,clock.UtcNow.AddMinutes(5),use,use==CredentialUse.None?"":BoundCredentialRevision(use));
         previews.Add(authority.Id,authority);return authority;
+    }
+    void RequireCurrentAuthority(PreviewAuthority authority,Operation operation)
+    {
+        EnsureCurrent(operation.Generation,operation.Token);
+        if(authority.Owner!=ownerContext||authority.Generation!=generation||authority.DraftRevision!=draftRevision||authority.RetentionDays!=state.RetentionDays||clock.UtcNow<authority.CreatedAt||clock.UtcNow>authority.ExpiresAt||
+            authority.Use!=CredentialUse.None&&(selectedCredentials is null||(allowedCredentials&authority.Use)!=authority.Use||BoundCredentialRevision(authority.Use)!=authority.CredentialRevision))
+            throw new RuntimeFault(RuntimeFailure.Configuration);
     }
     void Consume(PreviewAuthority authority,Operation operation)
     {
-        EnsureCurrent(operation.Generation,operation.Token);
-        if(authority.Owner!=ownerContext||authority.Generation!=generation||authority.RetentionDays!=state.RetentionDays||clock.UtcNow<authority.CreatedAt||clock.UtcNow>authority.ExpiresAt||
-            !previews.Remove(authority.Id)||authority.Use!=CredentialUse.None&&(selectedCredentials is null||(allowedCredentials&authority.Use)!=authority.Use||BoundCredentialRevision(authority.Use)!=authority.CredentialRevision))
-            throw new RuntimeFault(RuntimeFailure.Configuration);
+        RequireCurrentAuthority(authority,operation);
+        if(!previews.Remove(authority.Id))throw new RuntimeFault(RuntimeFailure.Configuration);
     }
     /// <summary>Local, memory-only scope/retention effects. No source or credential-file I/O.</summary>
     public MonitoringPreview PreviewMonitoring(MonitoringRequest request)
@@ -50,11 +55,15 @@ public sealed partial class InsightController
         await Run(async operation=>
         {
             RequireStore();model.Validate();var batch=candidates??throw new RuntimeFault(RuntimeFailure.Configuration);state.EnsureRetained(batch);
-            var rows=batch.Messages.Where(m=>!state.Attempted.Contains(InsightState.AttemptKey(batch.Scope,m))).ToArray();
-            if(rows.Length==0){Commit(operation,()=>notice="这些来源修订已有模型尝试；请核对历史，不自动重试。");return false;}
+            var task=AnalysisTask;var selected=AnalysisAttemptPolicy.Select(state,batch,task);
+            if(selected.Batch.Messages.Count==0){Commit(operation,()=>notice="这些来源在同一事项已有模型尝试；请核对历史，不自动重试。");return false;}
             var use=batch.IsDemo?CredentialUse.None:CredentialUse.Model;
             if(!batch.IsDemo){RequireCanonical();_ = await CredentialRevisionAsync(use,operation.Generation,operation.Token);}
-            Commit(operation,()=>result=new(NewAuthority(use),batch with{Messages=Array.AsReadOnly(rows)},batch.Fingerprint,AnalysisTask,model));return true;
+            Commit(operation,()=>
+            {
+                if(candidates?.Fingerprint!=batch.Fingerprint||AnalysisTask!=task)throw new RuntimeFault(RuntimeFailure.Configuration);
+                result=new(NewAuthority(use),selected,batch.Fingerprint,task,model);
+            });return true;
         },RuntimeFailure.Configuration,cancellation);return result;
     }
     public async Task<SendPreview?> PreviewSendAsync(string destinationName,CancellationToken cancellation=default)

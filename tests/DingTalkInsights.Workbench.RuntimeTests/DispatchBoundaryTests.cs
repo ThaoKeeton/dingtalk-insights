@@ -9,6 +9,47 @@ internal static class DispatchBoundaryTests
     static async Task Attempt(Func<Task> action){try{await action();}catch(RuntimeFault){}}
     public static IEnumerable<(string,Func<Task>)> All()
     {
+        foreach(var sending in new[]{false,true})
+        {
+            var send=sending;
+            yield return ($"dispatch boundary rejects a draft A B A change during {(send?"send":"analysis")} credential read",async()=>
+            {
+                await using var f=new CredentialTests.CredentialFixture();
+                if(send)Seed(f,f.Clock.UtcNow.AddMinutes(-10),report:true);
+                await f.Connect();await f.Controller.SaveCredentialsAsync(CredentialLocation.Host,Values,true);
+                await f.Controller.UseCredentialsAsync(CredentialLocation.Host,send?CredentialUse.Webhook:CredentialUse.Model,true);
+                AnalysisPreview? analysis=null;SendPreview? delivery=null;
+                if(send){await f.Controller.SelectHistoryAsync(f.Controller.Snapshot.History.Single());delivery=await f.Controller.PreviewSendAsync("Synthetic room");}
+                else{await f.Read();analysis=await f.Controller.PreviewAnalysisAsync(new());}
+                var original=f.Controller.Snapshot.Draft;var changed=false;
+                f.Store.BeforeRead=(id,_)=>
+                {
+                    if(id==(send?"dingtalk.webhook-url":"openai.api-key")&&!changed)
+                    {changed=true;f.Controller.SetDraft("Synthetic temporary draft B");f.Controller.SetDraft(original);}
+                    return Task.CompletedTask;
+                };
+                await Attempt(()=>send?f.Controller.SendReportAsync(delivery!,true):f.Controller.AnalyzeCandidatesAsync(analysis!,true));
+                Check(changed&&f.Source.Models==0&&f.Source.Sends==0&&f.Controller.Snapshot.Requests==0,"draft change resurrected stale approval or reserved budget");
+            });
+        }
+        foreach(var sending in new[]{false,true})
+        {
+            var send=sending;
+            yield return ($"dispatch boundary refuses expired {(send?"send":"analysis")} approval after async credential read",async()=>
+            {
+                await using var f=new CredentialTests.CredentialFixture();
+                if(send)Seed(f,f.Clock.UtcNow.AddMinutes(-10),report:true);
+                await f.Connect();await f.Controller.SaveCredentialsAsync(CredentialLocation.Host,Values,true);
+                await f.Controller.UseCredentialsAsync(CredentialLocation.Host,send?CredentialUse.Webhook:CredentialUse.Model,true);
+                AnalysisPreview? analysis=null;SendPreview? delivery=null;
+                if(send){await f.Controller.SelectHistoryAsync(f.Controller.Snapshot.History.Single());delivery=await f.Controller.PreviewSendAsync("Synthetic room");}
+                else{await f.Read();analysis=await f.Controller.PreviewAnalysisAsync(new());}
+                var advanced=false;
+                f.Store.BeforeRead=(id,_)=>{if(id==(send?"dingtalk.webhook-url":"openai.api-key")&&!advanced){advanced=true;f.Clock.Now+=TimeSpan.FromMinutes(6);}return Task.CompletedTask;};
+                await Attempt(()=>send?f.Controller.SendReportAsync(delivery!,true):f.Controller.AnalyzeCandidatesAsync(analysis!,true));
+                Check(advanced&&f.Source.Models==0&&f.Source.Sends==0&&f.Controller.Snapshot.Requests==0,"expired confirmation reached transport or budget reservation");
+            });
+        }
         foreach(var supervised in new[]{false,true})foreach(var readNumber in new[]{1,2})
         {
             var monitor=supervised;var advanceOn=readNumber;

@@ -86,6 +86,9 @@ public sealed class InsightState
     public Dictionary<string,DateTimeOffset> Watermarks {get;set;}=[];
     public Dictionary<string,List<CoveredRange>> Coverage {get;set;}=[];
     public HashSet<string> Attempted {get;set;}=[];
+    public Dictionary<string,TaskSourceAttempts> TaskAttempts {get;set;}=[];
+    public bool TaskAttemptSidecarRequired {get;set;}
+    [System.Text.Json.Serialization.JsonIgnore] public bool AnalysisAttemptsAvailable {get;set;}=true;
     public List<SavedReport> Reports {get;set;}=[];
     public Dictionary<string,AttemptSource> AttemptSources {get;set;}=[];
     public DateTimeOffset? LegacyAttemptsExpireAt {get;set;}
@@ -105,6 +108,7 @@ public sealed class InsightState
         Supervisor.Validate();
         if(Version!=1||Messages is null||Watermarks is null||Coverage is null||Attempted is null||Reports is null||AttemptSources is null||Receipts is null||RetentionDays is <1 or >365||ReservedUsd<0||Requests<0||Messages.Count>50000)
             throw new SafetyException("本机数据版本或容量不受支持。");
+        AnalysisAttemptPolicy.Validate(TaskAttempts);
     }
     public static string MessageKey(QueryScope scope,SourceMessage m)=>scope.Key+":"+m.MessageId;
     public static string AttemptKey(QueryScope scope,SourceMessage m)=>Guard.Hash(scope.Key+":"+m.MessageId+":"+m.Revision);
@@ -158,7 +162,7 @@ public sealed class InsightState
     public void ClearIndex()
     {
         BackgroundPolicy.Revoke(this);
-        Messages.Clear();Coverage.Clear();Watermarks.Clear();Attempted.Clear();AttemptSources.Clear();Reports.Clear();Receipts.Clear();Monitoring=null;LegacyAttemptsExpireAt=null;
+        Messages.Clear();Coverage.Clear();Watermarks.Clear();Attempted.Clear();AttemptSources.Clear();TaskAttempts.Clear();TaskAttemptSidecarRequired=false;Reports.Clear();Receipts.Clear();Monitoring=null;LegacyAttemptsExpireAt=null;
         // Reservations and request/token counters are deliberately retained.
     }
     public void Reserve(ModelSettings settings,decimal reservation,DateTimeOffset now)
@@ -180,6 +184,7 @@ public sealed class InsightState
         // Keep every attempted revision until its source ages out, including A -> B -> A.
         foreach(var pair in AttemptSources.Where(p=>p.Value.CreatedAt<cutoff).ToArray())
         {Attempted.Remove(pair.Key);AttemptSources.Remove(pair.Key);}
+        foreach(var pair in TaskAttempts.Where(p=>p.Value.CreatedAt<cutoff).ToArray())TaskAttempts.Remove(pair.Key);
         // Version-1 hashes cannot be reversed to recover source age. Keep unknown legacy hashes conservatively
         // for the maximum supported retention interval after migration, even if the user later expands it.
         if(Attempted.Any(k=>!AttemptSources.ContainsKey(k)))

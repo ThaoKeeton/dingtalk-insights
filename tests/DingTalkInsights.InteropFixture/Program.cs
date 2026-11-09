@@ -15,11 +15,12 @@ var message=new SourceMessage("fixture-1",scope.ConversationId,"fixture-person",
 var batch=new MessageBatch(scope,[message],true,["Synthetic warning"],new Dictionary<string,JsonElement>());
 var model=new ModelSettings();const string task="Synthetic interoperability task";
 var report=AnalysisValidator.Validate("""{"issues":[{"title":"Synthetic interop review","summary":"Needs human verification","status":"resolved","communication":"","nextStep":"","evidence":[{"messageId":"fixture-1","quote":"compatibility evidence"}]}],"pendingQuestions":[]}""",batch,task);
-var expectedFacts=new{scopeHash=scope.Fingerprint,revision=message.Revision,batchHash=batch.Fingerprint,attempt=InsightState.AttemptKey(scope,message),requestHash=OpenAiClient.Fingerprint(batch,task,model),day="2035-02-03",requests=1,reserved=0.01m};
+var expectedFacts=new{scopeHash=scope.Fingerprint,revision=message.Revision,batchHash=batch.Fingerprint,attempt=InsightState.AttemptKey(scope,message),requestHash=OpenAiClient.Fingerprint(batch,task,model),foldedTask=AnalysisAttemptPolicy.TaskKey("Maße Synthetic"),day="2035-02-03",requests=1,reserved=0.01m};
+if(AnalysisAttemptPolicy.TaskKey("MASSE SYNTHETIC")!=expectedFacts.foldedTask)throw new Exception("Cross-runtime Unicode task folding changed.");
 using var store=new BusinessStore(Path.Combine(root,args[2]),cipher,clock);
 if(args[0]=="write")
 {
-    var state=store.Load();state.Ingest(batch);state.MarkAttempted(scope,batch.Messages);state.Reserve(model,0.01m,now);store.Save(state);
+    var state=store.Load();state.Ingest(batch);AnalysisAttemptPolicy.Record(state,batch,task);state.Reserve(model,0.01m,now);store.Save(state);
     state.Reports.Add(new(now,scope.Key,task,ReportRenderer.Markdown(report),false,message.CreatedAt));store.Save(state);
     store.Reviews.Decide(state,store.Reviews.Capture(state,report),0,true,true);
     var destination=Guard.Hash("synthetic-destination");var payload=Guard.Hash("synthetic-payload");var ledger=new SendLedger();
@@ -31,6 +32,7 @@ else if(args[0]=="read")
     if(File.ReadAllText(Path.Combine(root,args[2]+"-facts.json"))!=JsonSerializer.Serialize(expectedFacts))throw new Exception("Persisted source/request/attempt hashes changed across runtimes.");
     var state=store.Load();
     if(state.Requests!=1||state.ReservedUsd!=0.01m||state.BudgetDay!="2035-02-03"||state.Messages.Count!=1||!state.Attempted.Contains(InsightState.AttemptKey(scope,message)))throw new Exception("Persisted attempts/budget changed.");
+    if(AnalysisAttemptPolicy.Select(state,batch,task).Batch.Messages.Count!=0||AnalysisAttemptPolicy.Select(state,batch,"Synthetic different task").PreviouslyAttempted!=1)throw new Exception("Cross-runtime task-scoped protection or explicit reuse warning lost.");
     var calls=0;
     if(state.Coverage.Count!=1)throw new Exception("Persisted complete checkpoint changed.");
     // Force an overlap replay after validating the persisted checkpoint, to exercise attempted-revision suppression independently.
@@ -47,7 +49,7 @@ else if(args[0]=="read")
         if(revoked.Report!.Issues[0].HumanConfirmed)throw new Exception("Cross-runtime revoke did not restore tentative state.");
         store.Reviews.Decide(state,revoked,0,true,true);
     }
-    Console.WriteLine($"PASS {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription} {args[2]}: persisted hashes/attempts/UTC budget, human confirm/revoke/restore and no duplicate analysis");
+    Console.WriteLine($"PASS {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription} {args[2]}: persisted task-scoped attempts/UTC budget, human confirm/revoke/restore and no duplicate analysis");
 }
 else throw new ArgumentException("Unknown fixture command.");
 return 0;

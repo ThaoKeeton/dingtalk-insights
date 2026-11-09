@@ -41,7 +41,7 @@ public sealed partial class InsightController
                 EnforceRetention();if(store is not null)
                 {
                     try{store.Save(state);}
-                    catch(MonitoringFault fault)when(readOnly&&fault.Category==MonitorFailure.Storage&&store.ReviewMaintenanceBlocked){}
+                    catch(MonitoringFault fault)when(readOnly&&fault.Category==MonitorFailure.Storage&&store.MaintenanceBlocked){}
                 }
             });
             var result=await action(operation);Commit(operation,()=>EnforceRetention());return result;

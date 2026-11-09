@@ -123,7 +123,7 @@ public sealed partial class MainWindow:Window
         settingsPage=Scroll(settings);pages["settings"]=settingsPage;
         var help=Panel();help.Children.Add(Card("接入条件",Label("1. 独立安装官方 DWS，并在自己的电脑完成 dws auth login。企业未开通 CLI 时仍需管理员授权。\n2. 用 dws profile list 核对 corpId:userId；把明确身份与会话 ID 配置到本应用。\n3. 首先用一个会话与短时间范围核对消息数、时间和内容。\n4. 确认公司政策允许后，再配置新应用专用 OpenAI 密钥并开启上传。开发测试无需真实密钥。")));
         help.Children.Add(Card("首版的范围",Label("支持登录用户会话中的托盘持续检查和明确选择的启动后恢复、本机加密消息索引、断点追赶、关键词搜索、候选整理、人工核实、导出与手动 Webhook。\n关闭到托盘和重启恢复分别明确授权；通知区域失效时保持或恢复窗口。应用必须由已登录用户手动打开。暂不提供 Windows 服务、开机自启动、实时事件订阅、自动更新或附件正文解析。轮询可能漏掉查询窗口外的编辑、撤回或平台不可见历史；这类内容必须回钉钉核实。\n缺页、解析失败和授权失败暂停。仅明确可重试的 DWS 故障有界退避；预算耗尽时保留候选并继续采集，模型等下个 UTC 日；未知模型结果保留费用与尝试并暂停 AI，不跨过未知缺口。单次读取最多 1000 条，密集会话请缩小起始范围。\n消息默认保留 30 天，最大 50000 条；加密状态上限 32 MiB。超限会暂停，不静默丢弃。最近保留 100 份结果。\nWebhook 超时会标为结果不确定，先检查钉钉再决定重试。")));
-        help.Children.Add(Card("本机数据位置",Label(dataRoot+"\nstate.dpapi：消息、断点、尝试记录、费用预留和结果。\ncredentials.dpapi：本应用凭据。\nsend-attempts.dpapi：仅保存发送目标与正文摘要及尝试状态，不自动重发。\nreport-reviews.dpapi：证据快照与人工核实/撤销，备份交接时保留。\nsettings.json：不含密钥的普通设置。\nWindows DPAPI 仅保护静态文件；同一 Windows 用户下的恶意进程不在本应用隔离能力内。")));
+        help.Children.Add(Card("本机数据位置",Label(dataRoot+"\nstate.dpapi：消息、断点、尝试记录、费用预留和结果。\ncredentials.dpapi：本应用凭据。\nsend-attempts.dpapi：仅保存发送目标与正文摘要及尝试状态，不自动重发。\nreport-reviews.dpapi：证据快照与人工核实/撤销，备份交接时保留。\nanalysis-attempts.dpapi：按事项与来源修订去重，备份交接时保留。\nsettings.json：不含密钥的普通设置。\nWindows DPAPI 仅保护静态文件；同一 Windows 用户下的恶意进程不在本应用隔离能力内。")));
         pages["help"]=Scroll(help);
     }
 
@@ -151,7 +151,7 @@ public sealed partial class MainWindow:Window
         {currentReport=null;review=null;displayedSavedReport=null;markdown="";reportBox.Text="结果引用的来源已到保留期，已清理当前预览。";issuePicker.ItemsSource=null;}
         if(!state.Reports.SequenceEqual(previousReports))RefreshHistory();
         try{store.Save(state);}
-        catch(MonitoringFault fault)when(allowReviewReadOnly&&fault.Category==MonitorFailure.Storage&&store.ReviewMaintenanceBlocked){}
+        catch(MonitoringFault fault)when(allowReviewReadOnly&&fault.Category==MonitorFailure.Storage&&store.MaintenanceBlocked){}
         RefreshReview();
     }
     static DateTimeOffset ParseTime(string text)
@@ -225,15 +225,31 @@ public sealed partial class MainWindow:Window
     }
     async Task AnalyzeCandidatesAsync()
     {
-        var batch=candidates??throw new SafetyException("请先读取或搜索候选消息。");if(batch.Messages.Count==0)throw new SafetyException("当前没有候选消息，请调整搜索词或时间范围。");
-        var task=taskText.Text.Trim();var model=Model();string key="";
-        if(!batch.IsDemo)
+        var original=candidates??throw new SafetyException("请先读取或搜索候选消息。");if(original.Messages.Count==0)throw new SafetyException("当前没有候选消息，请调整搜索词或时间范围。");
+        var task=taskText.Text.Trim();var model=Model();var token=ActiveToken;var selected=AnalysisAttemptPolicy.Select(state,original,task);var batch=selected.Batch;string key="";
+        if(batch.Messages.Count==0)throw new SafetyException("这些来源在同一事项已有模型尝试；请核对历史，不自动重试。");
+        void RequireUnchanged()
+        {
+            token.ThrowIfCancellationRequested();EnforceRetention();
+            if(candidates?.Fingerprint!=original.Fingerprint||taskText.Text.Trim()!=task)throw new SafetyException("事项或候选已改变，请重新预览。");
+            var next=AnalysisAttemptPolicy.Select(state,candidates,task);
+            if(next.Batch.Fingerprint!=batch.Fingerprint||next.SkippedSameTask!=selected.SkippedSameTask||next.PreviouslyAttempted!=selected.PreviouslyAttempted)
+                throw new SafetyException("来源尝试状态已改变，请重新预览。");
+        }
+        var reuse=selected.PreviouslyAttempted>0;
+        if(reuse)
+        {
+            if(!await Confirm("确认是不同的新事项",$"事项：{task}\n范围：{batch.Scope.Display}\n本次 {batch.Messages.Count} 条，其中 {selected.PreviouslyAttempted} 条已有尝试；同事项已排除 {selected.SkippedSameTask} 条。\n先前结果可能未知或已计费，旧记录无法证明事项是否相同。只有确认这确是不同事项并接受再次处理和可能再次计费，才继续预览。修改措辞或特殊字符可能被视为新事项；不会自动重试旧事项。","确认不同事项，继续预览"))return;
+            RequireUnchanged();
+        }
+        if(!batch.IsDemo||reuse)
         {
             var request=OpenAiClient.BuildRequest(batch,task,model);var reserve=OpenAiClient.Reservation(request,model);
-            if(!await Confirm("本次向 OpenAI 上传候选正文",$"{batch.Scope.Display}\n{batch.Messages.Count} 条；模型 {model.Model}\n事项：{task}\n本次保守预留：USD {reserve:F6}\n\n将发送上方预览中的姓名、消息 ID、时间与正文。请先确认公司政策允许。不会发送 Webhook。","同意上传并整理一次"))return;
-            key=vault.Read().OpenAiKey;if(string.IsNullOrWhiteSpace(key))throw new SafetyException("请先在设置中配置本应用的专用 OpenAI 密钥。");
+            if(!await Confirm(batch.IsDemo?"模拟整理预览（不联网）":"本次向 OpenAI 上传候选正文",$"{batch.Scope.Display}\n{batch.Messages.Count} 条；模型 {model.Model}\n事项：{task}\n同事项排除 {selected.SkippedSameTask} 条；复用旧来源 {selected.PreviouslyAttempted} 条。\n{(batch.IsDemo?"模拟不会请求服务或计费。":$"本次保守预留：USD {reserve:F6}。请先确认公司政策允许。不会发送 Webhook。")}\n\n以下是本次固定请求正文：\n{request}",batch.IsDemo?"确认模拟整理":"同意上传并整理一次"))return;
+            RequireUnchanged();
+            if(!batch.IsDemo){key=vault.Read().OpenAiKey;if(string.IsNullOrWhiteSpace(key))throw new SafetyException("请先在设置中配置本应用的专用 OpenAI 密钥。");}
         }
-        var result=await engine.AnalyzeOnceAsync(batch,task,model,Analyzer(batch.IsDemo,key,model),DateTimeOffset.UtcNow,ActiveToken);
+        var result=await engine.AnalyzeOnceAsync(batch,task,model,Analyzer(batch.IsDemo,key,model),DateTimeOffset.UtcNow,token,reuseConfirmed:reuse);
         var archived=SetReport(result.Report);Navigate("results");StatusText.Text=archived?"整理完成，候选结论与证据请逐项核实。":ReviewStorageNotice;
     }
     Func<MessageBatch,string,CancellationToken,Task<ModelResult>> Analyzer(bool demo,string key,ModelSettings model)=>
@@ -338,7 +354,7 @@ public sealed partial class MainWindow:Window
         BackgroundPolicy.Revoke(state);store.Save(state);vault.Save(next);apiKey.Password="";webhookUrl.Password="";webhookSecret.Password="";await SaveSettingsAsync();StatusText.Text="凭据已在本机加密保存，未测试或请求真实服务。";
     }
     async Task ClearCredentialsAsync(){if(await Confirm("移除本应用凭据","删除本应用保存的加密凭据文件。不会注销 DWS，也不会撤销 OpenAI 平台密钥；如需撤销，请在对应平台操作。","移除本机凭据")){BackgroundPolicy.Revoke(state);store.Save(state);vault.Clear();apiKey.Password="";webhookUrl.Password="";webhookSecret.Password="";StatusText.Text="已移除本应用的本机凭据文件。";}}
-    async Task ClearIndexAsync(){if(await Confirm("删除本机消息和结果索引","删除本应用的消息、断点、尝试记录、结果与人工核实；当日费用预留、请求数与发送尝试保留，避免清理后绕过预算或重复发送。不会影响钉钉原始聊天。","删除本机索引")){candidates=null;currentReport=null;review=null;displayedSavedReport=null;markdown="";candidateBox.Text="";reportBox.Text="";issuePicker.ItemsSource=null;store.ClearIndex(state);RefreshHistory();StatusText.Text="本机索引与人工核实已清理，当日费用预留保留。";}}
+    async Task ClearIndexAsync(){if(await Confirm("删除本机消息和结果索引","删除本应用的消息、断点、结果、人工核实，以及来源和事项的全部模型尝试记录。未知结果可能已处理并计费；清理后再次整理同一事项可能重复处理或计费。当日费用预留、请求数与发送尝试保留，避免绕过预算或重复发送。不会影响钉钉原始聊天。","删除本机索引")){candidates=null;currentReport=null;review=null;displayedSavedReport=null;markdown="";candidateBox.Text="";reportBox.Text="";issuePicker.ItemsSource=null;store.ClearIndex(state);RefreshHistory();StatusText.Text="本机索引与人工核实已清理，当日费用预留保留。";}}
 
     Button Action(string text,string id,Func<Task> handler,bool reviewRecovery=false){var button=new Button{Content=text};AutomationProperties.SetAutomationId(button,id);button.Click+=async(_,_)=>await Run(handler,reviewRecovery:reviewRecovery);actions.Add(button);return button;}
     static StackPanel Panel()=>new(){Spacing=18,Padding=new Thickness(0,0,4,16)};

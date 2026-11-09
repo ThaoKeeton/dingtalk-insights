@@ -93,7 +93,7 @@ internal sealed class InsightPage:UserControl
         Add(key,webhook,secret,Action("加密保存新输入凭据…","DTI 保存新凭据",SaveCredentials));
         Add(Action("删除所选来源的凭据…","DTI 删除所选凭据",DeleteCredentials));
         Add(Action("清理本机内容索引…","DTI 清理索引",async()=>
-        {if(await Confirm("清理索引","清理当前连接的本机消息、结果、断点及全部人工核实，解除核实文件的失效屏障；当日预算、请求和发送尝试保留。不会修改钉钉原始聊天。"))await Work(()=>controller.ClearIndexAsync(true));}));
+        {if(await Confirm("清理索引","清理当前连接的本机消息、结果、断点、人工核实，以及来源和事项的全部模型尝试记录。未知结果可能已处理并计费；清理后再次整理同一事项可能重复处理或计费。核实失效屏障会解除；当日预算、请求和发送尝试保留。不会修改钉钉原始聊天。"))await Work(()=>controller.ClearIndexAsync(true));}));
         body.Children.Add(Text("帮助与限制",20));
         body.Children.Add(Text("监控为官方 DWS 会话消息轮询，不是桌面捕获。只读模式不调用模型；未知/不完整来源不会推进完整断点。模型失败、预算延后、权限和迁移失败均显示安全类别。关闭/睡眠/注销期间不保证实时采集。宿主 0.2 注册一个须经插件预览确认的监控任务，不允许宿主通用开始或自动恢复。停止监控保留明确连接与已批准用途；撤销凭据用途会停止所有工作并保留账本；停用/退出彻底退役，再次开始须新确认。宿主凭据不可用时须显式选择其他来源，不自动切换。宿主包服务须重启前维护；程序集保持加载至退出。人工 Webhook 结果不确定时不自动重发，重发可能重复。费用单价是用户输入的本地估算，不是实时报价。"));
     }
@@ -178,9 +178,13 @@ internal sealed class InsightPage:UserControl
     async Task Analyze()
     {
         var preview=await Work(()=>controller.PreviewAnalysisAsync(session.Preferences.Model));if(preview is null)return;
+        var reuse=preview.PreviouslyAttempted>0;
+        if(reuse&&!await Confirm("确认是不同的新事项",
+            $"事项：{preview.Task}\n范围：{preview.Batch.Scope.Display}\n本次 {preview.Batch.Messages.Count} 条，其中 {preview.PreviouslyAttempted} 条已有尝试；同事项已排除 {preview.SkippedSameTask} 条。\n先前结果可能未知或已计费，旧记录无法证明事项是否相同。只有确认这确是不同事项并接受再次处理和可能再次计费，才进入下一步精确请求预览。修改措辞或特殊字符可能被视为新事项；不会自动重试旧事项。",
+            "确认不同事项，继续预览"))return;
         var exact=OpenAiClient.BuildRequest(preview.Batch,preview.Task,preview.Model);
         if(await Confirm(preview.Batch.IsDemo?"模拟整理预览（不联网）":"上传模型预览",
-            $"精确范围：{preview.Batch.Scope.Display}\n模型 {preview.Model.Model}；预估上限预留 ${F(OpenAiClient.Reservation(exact,preview.Model))}；UTC 日预算 ${F(preview.Model.DailyBudgetUsd)} / {preview.Model.MaxRequestsPerDay} 请求\n以下为本次固定请求正文，确认后使用同一预览：\n{exact}"))await Work(()=>controller.AnalyzeCandidatesAsync(preview,true));
+            $"精确范围：{preview.Batch.Scope.Display}\n已排除同事项来源 {preview.SkippedSameTask} 条；其中复用旧来源 {preview.PreviouslyAttempted} 条。\n模型 {preview.Model.Model}；预估上限预留 ${F(OpenAiClient.Reservation(exact,preview.Model))}；UTC 日预算 ${F(preview.Model.DailyBudgetUsd)} / {preview.Model.MaxRequestsPerDay} 请求\n以下为本次固定请求正文，确认后使用同一预览：\n{exact}"))await Work(()=>controller.AnalyzeCandidatesAsync(preview,true,reuseConfirmed:reuse));
     }
     async Task Resolve(bool resolved)
     {

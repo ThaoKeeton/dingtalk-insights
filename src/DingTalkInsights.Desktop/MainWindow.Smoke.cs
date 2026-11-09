@@ -32,6 +32,10 @@ public sealed partial class MainWindow
                 Check(state.Receipts.Any(r=>!r.Complete&&r.Ledger.ContainsKey("syntheticLimit"))&&!monitorSummary.Text.Contains("SYNTHETIC_LIMIT"),"restart-collection-limitations-safe-summary");
                 File.WriteAllText(Path.Combine(output,"restored-report.md"),markdown);
                 Check(File.ReadAllText(Path.Combine(output,"restored-report.md")).Contains("demo-2"),"restart-saved-report-export");
+                source.SelectedIndex=1;profile.Text="demo:local";conversation.Text="demo-project";
+                var indexed=state.Messages.Values.Select(v=>v.Message).ToArray();askStart.Text=indexed.Min(m=>m.CreatedAt).AddSeconds(-1).ToString("O");askEnd.Text=DateTimeOffset.UtcNow.ToString("O");
+                taskText.Text="Synthetic native distinct topic B";Navigate("ask");await InvokeAsync("search-local");await InvokeAsync("analyze-candidates");
+                Check(StatusText.Text.Contains("同一事项已有模型尝试")&&state.Requests==0,"restart-same-task-refuses-replay");source.SelectedIndex=0;
                 Navigate("settings");source.SelectedIndex=1;
                 var origin=state.Monitoring??throw new SafetyException("Missing synthetic monitoring origin.");
                 Check(profile.Text=="smoke:identity"&&conversation.Text=="smoke-conversation"&&ParseTime(since.Text)==origin.Start&&origin.Start<DateTimeOffset.UtcNow.AddDays(-59),"restart-authorized-identity-conversation-origin");
@@ -52,8 +56,15 @@ public sealed partial class MainWindow
             Check(currentReport?.Issues.Count==2&&reportBox.Text.Contains("demo-2"),"native-analyze-evidence");
             Check(currentReport!.Issues.All(i=>i.Status==IssueStatus.PendingVerification),"no-automatic-resolution");
             Check(state.ReservedUsd==0&&state.Requests==0,"demo-no-api-spend");
+            var originalReports=state.Reports.Count;taskText.Text="Synthetic native distinct topic B";Navigate("ask");
+            await InvokeNewTaskAsync(false,false);
+            Check(state.Reports.Count==originalReports&&currentReport.Task!="Synthetic native distinct topic B","native-new-task-risk-cancel");
+            await InvokeNewTaskAsync(true,false);
+            Check(state.Reports.Count==originalReports&&currentReport.Task!="Synthetic native distinct topic B","native-new-task-request-cancel");
+            await InvokeNewTaskAsync(true,true);
+            Check(state.Reports.Count==originalReports+1&&currentReport?.Task=="Synthetic native distinct topic B"&&state.TaskAttempts.Values.All(v=>v.Tasks.Count==2),"native-confirmed-new-task-reuses-source");
             await InvokeReviewAsync("confirm-resolved",false);
-            Check(!currentReport.Issues[0].HumanConfirmed,"native-review-cancel-no-certainty");
+            Check(!currentReport!.Issues[0].HumanConfirmed,"native-review-cancel-no-certainty");
             using(var blockedReview=new FileStream(Path.Combine(dataRoot,"report-reviews.dpapi"),FileMode.Open,FileAccess.Read,FileShare.Read))
             {
                 await InvokeReviewAsync("confirm-resolved",true);
@@ -240,6 +251,18 @@ public sealed partial class MainWindow
         await AwaitSmokeCondition(()=>activeDialog is not null&&SmokeDescendants<Button>(activeDialog).Any(b=>Equals(b.Content,approve?activeDialog.PrimaryButtonText:activeDialog.CloseButtonText)));
         var dialog=activeDialog!;
         Invoke(SmokeDescendants<Button>(dialog).Single(b=>Equals(b.Content,approve?dialog.PrimaryButtonText:dialog.CloseButtonText)));
+        await AwaitSmokeCondition(()=>activeDialog is null&&operations.CurrentCount==1);
+    }
+    async Task InvokeNewTaskAsync(bool approveRisk,bool approveRequest)
+    {
+        Invoke(actions.Single(b=>AutomationProperties.GetAutomationId(b)=="analyze-candidates"));
+        await AwaitSmokeCondition(()=>activeDialog is not null&&SmokeDescendants<Button>(activeDialog).Any(b=>Equals(b.Content,approveRisk?activeDialog.PrimaryButtonText:activeDialog.CloseButtonText)));
+        var risk=activeDialog!;Invoke(SmokeDescendants<Button>(risk).Single(b=>Equals(b.Content,approveRisk?risk.PrimaryButtonText:risk.CloseButtonText)));
+        if(approveRisk)
+        {
+            await AwaitSmokeCondition(()=>activeDialog is {} next&&!ReferenceEquals(next,risk)&&SmokeDescendants<Button>(next).Any(b=>Equals(b.Content,approveRequest?next.PrimaryButtonText:next.CloseButtonText)));
+            var request=activeDialog!;Invoke(SmokeDescendants<Button>(request).Single(b=>Equals(b.Content,approveRequest?request.PrimaryButtonText:request.CloseButtonText)));
+        }
         await AwaitSmokeCondition(()=>activeDialog is null&&operations.CurrentCount==1);
     }
     static IEnumerable<T> SmokeDescendants<T>(DependencyObject root)where T:DependencyObject

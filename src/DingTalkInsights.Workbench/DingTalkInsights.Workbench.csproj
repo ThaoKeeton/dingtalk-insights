@@ -8,7 +8,7 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <GenerateDependencyFile>true</GenerateDependencyFile>
-    <Version>0.3.3</Version>
+    <Version>0.3.4</Version>
     <WorkbenchSnapshotRoot Condition="'$(WorkbenchSnapshotRoot)' == ''">$(MSBuildThisFileDirectory)../../eng/vendor/workbench-27154465</WorkbenchSnapshotRoot>
   </PropertyGroup>
   <ItemGroup>
@@ -18,5 +18,6 @@
     <Compile Remove="PluginSession.cs;NativeActionGate.cs;WorkbenchMonitorTask.cs;WorkbenchCredentialProvider.cs" />
     <ProjectReference Include="../DingTalkInsights.Workbench.Bridge/DingTalkInsights.Workbench.Bridge.csproj" />
     <None Update="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../THIRD_PARTY_NOTICES.md" Link="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

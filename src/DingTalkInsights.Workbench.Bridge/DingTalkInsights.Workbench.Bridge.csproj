@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><TargetFramework>net10.0</TargetFramework><Version>0.3.3</Version></PropertyGroup>
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><Version>0.3.4</Version></PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../eng/vendor/workbench-27154465/src/Workbench.Sdk/Workbench.Sdk.csproj" Private="false" />
     <ProjectReference Include="../DingTalkInsights.Runtime/DingTalkInsights.Runtime.csproj" />

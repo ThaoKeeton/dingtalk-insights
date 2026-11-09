@@ -52,6 +52,7 @@ Add("补充完整性字段未知类型或真值均不完整",()=>{foreach(var fi
 tests.AddRange(DeliveryTests.All());
 tests.AddRange(ReportReviewTests.All());
 tests.AddRange(ReviewControllerTests.All());
+tests.AddRange(TaskAwareAnalysisTests.All());
 tests.AddRange(RuntimeTests.All());
 tests.AddRange(WorkbenchAdapterTests.All());
 tests.AddRange(NativeAdapterTests.All());

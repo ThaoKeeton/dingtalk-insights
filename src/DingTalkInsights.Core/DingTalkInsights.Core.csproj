@@ -1,3 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Unicode/CaseFolding-15.1.0.txt" LogicalName="DingTalkInsights.Core.CaseFolding-15.1.0.txt" />
+    <EmbeddedResource Include="Unicode/UNICODE-LICENSE.txt" LogicalName="DingTalkInsights.Core.UnicodeLicense.txt" />
+  </ItemGroup>
 </Project>

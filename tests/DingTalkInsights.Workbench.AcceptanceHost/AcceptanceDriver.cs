@@ -114,6 +114,23 @@ internal static partial class AcceptanceDriver
             await ConfirmAction(window,page,"DTI 人工确认解决",true);
             await WaitActionRendered(plugin,"DTI 人工确认解决",()=>Find<TextBox>(page,"DTI 待核实结果").Text.Contains("人工确认已解决"),"Repeated explicit confirmation failed.");
             Record("Actual native human-review cancel/confirm, history restore, revoke/reconfirm persist through production encrypted archive; no model/send dispatch");
+            var taskInput=Find<TextBox>(page,"DTI 整理事项");var taskB=Draft+" Synthetic distinct task B";
+            var changed=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void DraftChanged(object _,TextChangedEventArgs __){if(taskInput.Text==taskB)changed.TrySetResult();}
+            taskInput.TextChanged+=DraftChanged;
+            try{taskInput.Text=taskB;await changed.Task.WaitAsync(TimeSpan.FromSeconds(15));}
+            finally{taskInput.TextChanged-=DraftChanged;}
+            var beforeTaskB=Resources(plugin).GetProperty("Dispatches").GetInt64();
+            await ConfirmNewTask(window,page,false);
+            await WaitActionRendered(plugin,"DTI 整理候选",()=>Resources(plugin).GetProperty("Dispatches").GetInt64()==beforeTaskB,"Cancelled new-task risk dialog dispatched work.");
+            await ConfirmNewTask(window,page,true,approveRequest:false);
+            await WaitActionRendered(plugin,"DTI 整理候选",()=>Resources(plugin).GetProperty("Dispatches").GetInt64()==beforeTaskB,"Cancelled exact request dialog dispatched work.");
+            await ConfirmNewTask(window,page,true);
+            await WaitActionRendered(plugin,"DTI 整理候选",()=>Find<TextBox>(page,"DTI 待核实结果").Text.Contains("Synthetic distinct task B")&&Find<ComboBox>(page,"DTI 历史结果").Items.Count>=2,"Distinct task did not use the explicitly approved prior source.");
+            Require(Resources(plugin).GetProperty("Dispatches").GetInt64()==beforeTaskB+1,"New task did not dispatch exactly one synthetic model operation.");
+            await ConfirmAction(window,page,"DTI 人工确认解决",true);
+            await WaitActionRendered(plugin,"DTI 人工确认解决",()=>Find<TextBox>(page,"DTI 待核实结果").Text.Contains("人工确认已解决"),"New task review did not persist.");
+            Record("Actual native new-task risk cancel, separate approval, exact one demo model call, history and review persistence");
             await Start(window,page,plugin);
             var actualLoop=Loop(plugin);Require(!actualLoop.IsCompleted,"Actual MonitorSupervisor task not alive.");
             var reads=Resources(plugin).GetProperty("Dispatches").GetInt64();
@@ -149,6 +166,11 @@ internal static partial class AcceptanceDriver
             await WaitActionRendered(plugin,"DTI 打开模拟",()=>Resources(plugin).GetProperty("StoreOwned").GetBoolean()&&Find<ComboBox>(page,"DTI 历史结果").Items.Count>0,"Re-enabled demo open/history render failed.");
             Find<ComboBox>(page,"DTI 历史结果").SelectedIndex=0;
             await WaitActionRendered(plugin,"selection",()=>Find<TextBox>(page,"DTI 待核实结果").Text.Contains("人工确认已解决"),"Re-enable lost human confirmation.");
+            Find<TextBox>(page,"DTI 搜索词").Text="修复";await ConfirmAction(window,page,"DTI 搜索",true);
+            await WaitActionRendered(plugin,"DTI 搜索",()=>Observation(plugin).GetProperty("Candidates").GetInt32()>0,"Re-enable local search did not restore candidates.");
+            var beforeReplay=Resources(plugin).GetProperty("Dispatches").GetInt64();Invoke(Find<Button>(page,"DTI 整理候选"));
+            await WaitActionRendered(plugin,"DTI 整理候选",()=>Find<TextBlock>(page,"DTI 操作结果").Text.Contains("同一事项已有模型尝试"),"Restored original task did not refuse duplicate.");
+            Require(Resources(plugin).GetProperty("Dispatches").GetInt64()==beforeReplay,"Re-enable replayed a saved task/source.");
             Record("Fresh controller after disable restores exact saved human verification without a new model");
             await Start(window,page,plugin);
             Record("Re-enable creates fresh controller/default demo; explicit saved-config load and separate new monitor confirmation work");
@@ -178,7 +200,7 @@ internal static partial class AcceptanceDriver
             var fresh=manager.Plugins.Single();Require(fresh.Manifest?.Id==Id&&fresh.State==PluginState.Disabled&&!fresh.IsLoaded&&!fresh.IsTrusted&&!fresh.DesiredEnabled,"SDK install/rollback inherited trust or enabled authority.");
             Require(!(await manager.EnableAsync(Id)).Succeeded,"SDK install/rollback enabled without fresh trust.");
             Require(Fingerprint(fresh.PackagePath)==packageHash&&File.Exists(Path.Combine(data,"connection-draft.dpapi")),"SDK install/rollback lost code/current data.");
-            Require(File.Exists(Path.Combine(data,"demo","report-reviews.dpapi")),"SDK install/rollback lost human verification archive.");
+            Require(File.Exists(Path.Combine(data,"demo","report-reviews.dpapi"))&&File.Exists(Path.Combine(data,"demo","analysis-attempts.dpapi")),"SDK install/rollback lost review/attempt archives.");
             Require(manager.GetBackgroundTaskSnapshots(Id).Count==0&&!AppDomain.CurrentDomain.GetAssemblies().Any(a=>a.GetName().Name=="DingTalkInsights.Workbench"),"SDK maintenance auto-loaded plugin/collector.");
             Record("Actual fresh-process SDK "+options.Phase+" code is disabled/untrusted/unloaded; existing encrypted data retained; fresh trust still required");
             if(options.Phase=="maintained")
@@ -198,7 +220,7 @@ internal static partial class AcceptanceDriver
         }
         else
         {
-            Require(manager.Plugins.Count==0,"Offline removed package still discovered.");Require(Directory.Exists(data)&&File.Exists(Path.Combine(data,"connection-draft.dpapi"))&&File.Exists(Path.Combine(data,"demo","report-reviews.dpapi")),"Offline package removal deleted user data/review archive.");
+            Require(manager.Plugins.Count==0,"Offline removed package still discovered.");Require(Directory.Exists(data)&&File.Exists(Path.Combine(data,"connection-draft.dpapi"))&&File.Exists(Path.Combine(data,"demo","report-reviews.dpapi"))&&File.Exists(Path.Combine(data,"demo","analysis-attempts.dpapi")),"Offline package removal deleted user data/review/attempt archives.");
             var home=await window.SmokeNavigateAsync("plugins");Require(!Descendants<Button>(home).Any(b=>AutomationProperties.GetName(b)=="启用 钉钉沟通事项"),"Removed package has native action.");
             Record(options.Phase=="removed"?"Actual SDK staged removal applied by a fresh lease-owning helper before discovery; absent relaunch retains current encrypted data/settings/history; no purge":"After verified prior exit, driver-only offline package removal relaunches absent while encrypted data remain; separate legacy regression, not SDK uninstall");
         }
@@ -291,12 +313,18 @@ internal static partial class AcceptanceDriver
         },"Current native page/action did not become ready and idle.");
         Invoke(Find<Button>(page,name));await Dialog(window,approve,"确认本次操作");
     }
+    static async Task ConfirmNewTask(MainWindow window,FrameworkElement page,bool approve,bool approveRequest=true)
+    {
+        await Wait(()=>page.IsLoaded&&page.XamlRoot is not null&&!PageState(PluginTarget(window.SmokeManager)).GetProperty("Busy").GetBoolean()&&Find<Button>(page,"DTI 整理候选").IsEnabled,"New-task button not ready.");
+        Invoke(Find<Button>(page,"DTI 整理候选"));await Dialog(window,approve,"确认不同事项，继续预览");
+        if(approve)await Dialog(window,approveRequest,"确认本次操作");
+    }
     static async Task Dialog(MainWindow window,bool approve,string primary)
     {
         await Wait(()=>OpenDialogs(window).Any(),"Actual ContentDialog did not open.");var dialog=OpenDialogs(window).Single();
         await Wait(()=>Descendants<Button>(dialog).Any(b=>Equals(b.Content,approve?primary:"取消")),"Dialog native button did not load.");
         Invoke(Descendants<Button>(dialog).Single(b=>Equals(b.Content,approve?primary:"取消")));
-        await Wait(()=>!OpenDialogs(window).Any(),"Actual ContentDialog did not close.");
+        await Wait(()=>!OpenDialogs(window).Any(item=>ReferenceEquals(item,dialog)),"Actual ContentDialog did not close.");
     }
     static IEnumerable<ContentDialog> OpenDialogs(MainWindow window)=>VisualTreeHelper.GetOpenPopupsForXamlRoot(((FrameworkElement)window.Content).XamlRoot)
         .SelectMany(p=>Descendants<ContentDialog>(p.Child));

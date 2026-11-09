@@ -2,7 +2,7 @@ using DingTalkInsights.Core;
 
 namespace DingTalkInsights.Runtime;
 
-internal sealed record PreviewAuthority(Guid Id,string Owner,long Generation,int RetentionDays,DateTimeOffset CreatedAt,DateTimeOffset ExpiresAt,CredentialUse Use,string CredentialRevision);
+internal sealed record PreviewAuthority(Guid Id,string Owner,long Generation,long DraftRevision,int RetentionDays,DateTimeOffset CreatedAt,DateTimeOffset ExpiresAt,CredentialUse Use,string CredentialRevision);
 public sealed class ResolutionPreview
 {
     internal ResolutionPreview(PreviewAuthority authority,ReportReviewView view,int index,bool resolved)
@@ -33,13 +33,15 @@ public sealed class MonitoringPreview
 }
 public sealed class AnalysisPreview
 {
-    internal AnalysisPreview(PreviewAuthority authority,MessageBatch batch,string candidateFingerprint,string task,ModelSettings model)
-    {Authority=authority;Batch=batch with{Messages=Array.AsReadOnly(batch.Messages.ToArray()),Warnings=Array.AsReadOnly(batch.Warnings.ToArray())};CandidateFingerprint=candidateFingerprint;Task=task;Model=model;}
+    internal AnalysisPreview(PreviewAuthority authority,AnalysisSelection selection,string candidateFingerprint,string task,ModelSettings model)
+    {Authority=authority;Batch=selection.Batch with{Messages=Array.AsReadOnly(selection.Batch.Messages.ToArray()),Warnings=Array.AsReadOnly(selection.Batch.Warnings.ToArray())};CandidateFingerprint=candidateFingerprint;Task=task;Model=model;SkippedSameTask=selection.SkippedSameTask;PreviouslyAttempted=selection.PreviouslyAttempted;}
     internal PreviewAuthority Authority{get;}
     internal string CandidateFingerprint{get;}
     public MessageBatch Batch{get;}
     public string Task{get;}
     public ModelSettings Model{get;}
+    public int SkippedSameTask{get;}
+    public int PreviouslyAttempted{get;}
 }
 public sealed class SendPreview
 {

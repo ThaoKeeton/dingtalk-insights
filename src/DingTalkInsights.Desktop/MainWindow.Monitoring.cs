@@ -185,7 +185,7 @@ public sealed partial class MainWindow
         if(ReviewRecoveryBlocked)
         {
             source.SelectedIndex=0;state.Supervisor=state.Supervisor with{Status=MonitorStatus.NeedsAttention,Failure=MonitorFailure.Storage};
-            StatusText.Text="本机核实清理未完成，仅能查看保留期内原始历史；本次没有读取凭据或检查 DWS。请检查存储或明确清理索引。";
+            StatusText.Text="本机整理尝试或核实数据维护未完成，仅能查看保留期内原始历史；本次没有读取凭据或检查 DWS。请检查存储或明确清理索引。";
             ShowMainWindow();RefreshStatus();return;
         }
         try

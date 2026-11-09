@@ -19,7 +19,7 @@ public sealed partial class InsightController:IAsyncDisposable
     readonly HashSet<Subscription> subscriptions=[];
     readonly AsyncLocal<bool> retirementWrite=new();
     readonly MessageBatch demo;
-    long generation,dispatches,ownedStoreWrites;
+    long generation,dispatches,ownedStoreWrites,draftRevision;
     int stopCount;
     bool deactivated;
     Task deactivation=Task.CompletedTask;
@@ -82,7 +82,7 @@ public sealed partial class InsightController:IAsyncDisposable
     }
     public void SetDraft(string text)
     {
-        lock(sync){EnsureActive();if(text.Length>2000)throw new RuntimeFault(RuntimeFailure.Configuration);draft=text;previews.Clear();snapshot=snapshot with{Draft=draft};}
+        lock(sync){EnsureActive();if(text.Length>2000)throw new RuntimeFault(RuntimeFailure.Configuration);draft=text;draftRevision++;previews.Clear();snapshot=snapshot with{Draft=draft};}
         Notify();
     }
     public IDisposable Subscribe(Action<RuntimeSnapshot> changed)
@@ -113,8 +113,11 @@ public sealed partial class InsightController:IAsyncDisposable
             catch(SafetyException){throw new RuntimeFault(RuntimeFailure.Ownership);}
             try
             {
-                var loaded=opened.Load();BackgroundPolicy.Revoke(loaded);opened.Save(loaded);
-                Commit(operation,()=>{store=opened;state=loaded;canonicalRoot=root;connection=RuntimeConnection.Canonical;ClearVisible();ClearCredentialUse();notice="已连接同一个规范账本；恢复权限已撤销，尚未读取来源或使用凭据。";});
+                var loaded=opened.Load();var hadRecovery=loaded.Recovery is not null;BackgroundPolicy.Revoke(loaded);var readOnly=false;
+                try{opened.Save(loaded);}
+                catch(MonitoringFault fault)when(fault.Category==MonitorFailure.Storage&&opened.AnalysisMaintenanceBlocked&&!hadRecovery){readOnly=true;}
+                Commit(operation,()=>{store=opened;state=loaded;canonicalRoot=root;connection=RuntimeConnection.Canonical;ClearVisible();ClearCredentialUse();
+                    notice=readOnly?"已连接只读历史；先前没有恢复授权。整理尝试侧账不可用，修复或明确清理前不会读取凭据、采集、整理或发送。":"已连接同一个规范账本；恢复权限已撤销，尚未读取来源或使用凭据。";});
                 return Task.FromResult(true);
             }
             catch{opened.Dispose();throw;}
@@ -192,7 +195,7 @@ public sealed partial class InsightController:IAsyncDisposable
         root=Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         for(var directory=new DirectoryInfo(root);directory is not null;directory=directory.Parent)
             if(!directory.Exists||(directory.Attributes&FileAttributes.ReparsePoint)!=0)throw new RuntimeFault(RuntimeFailure.Connection);
-        foreach(var name in new[]{"state.dpapi","state.dpapi.lock","credentials.dpapi","send-attempts.dpapi","report-reviews.dpapi","report-reviews.dpapi.blocked"})
+        foreach(var name in new[]{"state.dpapi","state.dpapi.lock","credentials.dpapi","send-attempts.dpapi","report-reviews.dpapi","report-reviews.dpapi.blocked","analysis-attempts.dpapi"})
         {
             var path=Path.Combine(root,name);
             if(File.Exists(path)&&(File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)throw new RuntimeFault(RuntimeFailure.Connection);

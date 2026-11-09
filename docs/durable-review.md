@@ -48,4 +48,4 @@ dotnet artifacts/workbench-plugin/tool/Microsoft.DingTalkInsights.PackageTool.dl
 
 Windows 验证由本分支的 [独立版工作流](../.github/workflows/windows.yml) 与 [插件工作流](../.github/workflows/workbench-plugin.yml) 执行。每份包的 build-info 和 Actions head_sha 标识其精确源码提交；完整运行/产物链接随本轮交付报告提供，不能用旧提交成功替代。Linux 引用编译只检查类型，不证明 WinUI/XAML/DPAPI 实际运行。未运行真实 Windows11、真实企业接口和长周期用户使用；未创建PR、合并或部署。
 
-下一项独立缺口：同一来源已被监控或事项A尝试整理后，用户更换事项B仍会被现有未知结果保护拒绝再次整理。父任务已用 c0c1d33 合成控制器复现；本轮保留预算预留、未知结果不自动重试和确认边界，不顺手移除该保护。
+历史记录：此前同一来源已被监控或事项A尝试整理后，事项B被全局尝试保护拒绝。后续独立修复的范围与边界见 [按事项整理](task-aware-analysis.md)。

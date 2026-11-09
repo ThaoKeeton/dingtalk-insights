@@ -2,7 +2,7 @@
 
 独立 Windows 原生应用：持续检查选定钉钉会话，发现可能的沟通难点；也可以输入整理事项，搜索相关消息后形成带来源的待核实摘要。界面查看、导出 Markdown，按需发送到已确认的钉钉 Webhook。
 
-v0.2.1 使用 WinUI 3 与 .NET 8。默认模拟模式，不自动登录、采集、上传或发送。适用于 Windows 10 19041+ / Windows 11 x64。
+v0.2.2 使用 WinUI 3 与 .NET 8。默认模拟模式，不自动登录、采集、上传或发送。适用于 Windows 10 19041+ / Windows 11 x64。
 
 ## 两种用法
 
@@ -62,7 +62,7 @@ GitHub Actions 的 [Windows native MVP](.github/workflows/windows.yml) 运行核
 
 后台策略、实现决策与测试清单见 [v0.2 背景监控设计](docs/background-monitoring.md)。
 
-## Workbench 原生插件 v0.3.3（持久人工核实）
+## Workbench 原生插件 v0.3.4（按事项整理）
 
 本分支已提取 .NET 8 `DingTalkInsights.Runtime`，与独立应用共用 Core、DPAPI 格式和规范账本独占锁；初始化/导航不连接真实服务。真实数据仅在明确连接标准独立应用数据目录后使用同一个物理账本，保留费用预留、来源和未知尝试；凭据用途另行确认，不继承恢复授权。停用/退出一律取消并等实际工作退役，重新启用需要明确开始。
 
@@ -73,3 +73,5 @@ GitHub Actions 的 [Windows native MVP](.github/workflows/windows.yml) 运行核
 本分支已实现真实 API1 DLL、代码创建的原生工作区/设置、可审计包和隔离的原始 presenter 源码宿主验收流程。Linux 已验证可移植运行时与引用编译；Windows 发布、WinUI/DPAPI 和全部原生阶段仍须按精确提交 CI 结果判定。构建、使用和证据边界见 [插件说明](docs/workbench-plugin.md)；另见 [设计](docs/superpowers/specs/2026-11-06-workbench-plugin-design.md)、[计划](docs/superpowers/plans/2026-11-06-workbench-plugin.md) 与 [当前 SDK 缺口和接线约束](docs/workbench-sdk-requirements.md)。
 
 持久核实的范围、兼容边界与合成验证命令见 [人工核实说明](docs/durable-review.md)。本轮精确提交与 Windows 阶段以该文档和 Actions 结果为准。
+
+按需整理按来源修订与事项文本分别去重；复用先前来源前需要单独确认不同事项及可能再次计费，再确认精确请求。旧版未区分事项的尝试保守视为结果不明。范围、旧版回退及合成验证见 [按事项整理](docs/task-aware-analysis.md)。

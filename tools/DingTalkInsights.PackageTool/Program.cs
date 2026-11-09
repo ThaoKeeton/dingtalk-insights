@@ -125,12 +125,12 @@ internal static class PackageTool
                     Copy(path,Path.Combine(output,relative));
                 }
             }
-            foreach(var name in new[]{Entry+".deps.json","plugin.json"})Copy(Path.Combine(build,name),Path.Combine(output,name));
+            foreach(var name in new[]{Entry+".deps.json","plugin.json","THIRD_PARTY_NOTICES.md"})Copy(Path.Combine(build,name),Path.Combine(output,name));
             foreach(var name in new[]{Entry,"DingTalkInsights.Core","DingTalkInsights.Runtime"})
                 if(!File.Exists(Path.Combine(output,name+".dll")))throw new IOException("Missing required private assembly: "+name);
             File.WriteAllText(Path.Combine(output,"build-info.json"),JsonSerializer.Serialize(new
             {
-                productVersion="0.3.3",productCommit,platformCommit="27154465c08d132798c8ea7b637f137f7340a90b",apiVersion=1,sdk="10.0.403",appSdk="1.8.260921001",
+                productVersion="0.3.4",productCommit,platformCommit="27154465c08d132798c8ea7b637f137f7340a90b",apiVersion=1,sdk="10.0.403",appSdk="1.8.260921001",
                 provenanceSha256=Hash(provenance),sharedIdentities=shared.Order(StringComparer.Ordinal).ToArray(),assemblies=Directory.EnumerateFiles(output,"*.dll",SearchOption.AllDirectories).Select(p=>new{path=Path.GetRelativePath(output,p),identity=AssemblyIdentity(p)??"native:"+Path.GetFileName(p)})
             },Json));
             File.WriteAllText(Path.Combine(output,"inventory.json"),JsonSerializer.Serialize(Inventory(output),Json));
@@ -165,6 +165,8 @@ internal static class PackageTool
                 if(shared.Contains(identity)||identity.Contains("Desktop",StringComparison.OrdinalIgnoreCase)||identity.Contains("AcceptanceHost",StringComparison.OrdinalIgnoreCase))throw new IOException("Forbidden shared/product identity: "+identity);
             }
         }
+        var notice=Path.Combine(root,"THIRD_PARTY_NOTICES.md");
+        if(!File.Exists(notice)||!File.ReadAllText(notice).Contains("CaseFolding-15.1.0",StringComparison.Ordinal))throw new IOException("Unicode third-party notice missing.");
         var expected=JsonSerializer.Deserialize<SortedDictionary<string,string>>(File.ReadAllText(Path.Combine(root,"inventory.json")))!;
         var actual=Inventory(root);
         if(expected.Count!=actual.Count||expected.Any(item=>!actual.TryGetValue(item.Key,out var hash)||hash!=item.Value))throw new IOException("Package bytes/inventory changed.");
@@ -200,13 +202,16 @@ internal static class PackageTool
             ExpectFailure(()=>VerifyPackage(root,shared),"shared identity");File.Delete(Path.Combine(root,"innocent.dll"));
             File.WriteAllText(Path.Combine(root,"nested.EXE"),"owned synthetic contamination");ExpectFailure(()=>VerifyPackage(root,shared),"EXE");File.Delete(Path.Combine(root,"nested.EXE"));
             File.WriteAllText(Path.Combine(root,"plugin.json"),"{\"entryAssembly\":\"DingTalkInsights.Workbench.dll\"}");
+            var notice=Path.Combine(root,"THIRD_PARTY_NOTICES.md");File.WriteAllText(notice,"Synthetic CaseFolding-15.1.0 notice");
             File.Copy(typeof(Demo).Assembly.Location,Path.Combine(root,"DingTalkInsights.Core.dll"));
             File.Copy(Assembly.GetExecutingAssembly().Location,Path.Combine(root,"Microsoft.DingTalkInsights.PackageTool.dll"));
             File.WriteAllText(Path.Combine(root,"inventory.json"),JsonSerializer.Serialize(Inventory(root),Json));VerifyPackage(root,shared);
             Directory.CreateDirectory(Path.Combine(root,"nested"));File.WriteAllText(Path.Combine(root,"nested","inventory.json"),"unlisted nested payload");
             ExpectFailure(()=>VerifyPackage(root,shared),"unlisted nested inventory payload");Directory.Delete(Path.Combine(root,"nested"),true);
+            File.Delete(notice);File.WriteAllText(Path.Combine(root,"inventory.json"),JsonSerializer.Serialize(Inventory(root),Json));
+            ExpectFailure(()=>VerifyPackage(root,shared),"missing third-party notice");File.WriteAllText(notice,"Synthetic CaseFolding-15.1.0 notice");File.WriteAllText(Path.Combine(root,"inventory.json"),JsonSerializer.Serialize(Inventory(root),Json));
             File.AppendAllText(Path.Combine(root,"plugin.json")," ");ExpectFailure(()=>VerifyPackage(root,shared),"changed bytes");
-            Console.WriteLine("5/5 package policy checks passed (renamed shared identity, EXE, private Microsoft identity, mutation).");
+            Console.WriteLine("6/6 package policy checks passed (renamed shared identity, EXE, private Microsoft identity, required notice, mutation).");
         }
         finally{Directory.Delete(root,true);}
     }

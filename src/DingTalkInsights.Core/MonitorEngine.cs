@@ -43,7 +43,7 @@ public sealed class MonitorEngine(InsightState state,IStateStore store)
                     var selected=batch with{Scope=initial with{End=now},Messages=pending,Complete=false,Warnings=batch.Warnings.Concat(["本次只整理尚未处理的增量候选，最多 40 条；不是全部历史结论。"]).ToArray()};
                     if(beforeModel is not null)await beforeModel(cancellation);
                     cancellation.ThrowIfCancellationRequested();
-                    try{report=(await AnalyzeLocked(selected,"发现可能的沟通难点，核对口径、验收和待确认事项，不进行人员评价。",model,analyze,now,cancellation,utcNow)).Report;}
+                    try{report=(await AnalyzeLocked(selected,"发现可能的沟通难点，核对口径、验收和待确认事项，不进行人员评价。",model,analyze,now,cancellation,utcNow,false)).Report;}
                     catch(MonitoringFault e)when(tolerateModelFailure&&e.Category==MonitorFailure.Budget){modelFailure=e.Category;deferred=e.DeferredUntil;}
                     catch(ModelAttemptFailure e)when(tolerateModelFailure){modelFailure=e.Category;}
                 }
@@ -53,23 +53,24 @@ public sealed class MonitorEngine(InsightState state,IStateStore store)
         finally{semaphore.Release();}
     }
     public async Task<ModelResult> AnalyzeOnceAsync(MessageBatch batch,string task,ModelSettings model,
-        Func<MessageBatch,string,CancellationToken,Task<ModelResult>> analyze,DateTimeOffset now,CancellationToken cancellation=default,Func<DateTimeOffset>? utcNow=null)
+        Func<MessageBatch,string,CancellationToken,Task<ModelResult>> analyze,DateTimeOffset now,CancellationToken cancellation=default,Func<DateTimeOffset>? utcNow=null,bool reuseConfirmed=false)
     {
         await semaphore.WaitAsync(cancellation);
-        try{state.Trim(now,state.RetentionDays);state.EnsureRetained(batch);return await AnalyzeLocked(batch,task,model,analyze,now,cancellation,utcNow);}
+        try{state.Trim(now,state.RetentionDays);state.EnsureRetained(batch);return await AnalyzeLocked(batch,task,model,analyze,now,cancellation,utcNow,reuseConfirmed);}
         finally{semaphore.Release();}
     }
     private async Task<ModelResult> AnalyzeLocked(MessageBatch batch,string task,ModelSettings model,
-        Func<MessageBatch,string,CancellationToken,Task<ModelResult>> analyze,DateTimeOffset now,CancellationToken cancellation,Func<DateTimeOffset>? utcNow)
+        Func<MessageBatch,string,CancellationToken,Task<ModelResult>> analyze,DateTimeOffset now,CancellationToken cancellation,Func<DateTimeOffset>? utcNow,bool reuseConfirmed)
     {
         cancellation.ThrowIfCancellationRequested();
         // The caller's async before-model preparation may have crossed a retention boundary.
         state.Trim(utcNow?.Invoke()??now,state.RetentionDays);state.EnsureRetained(batch);
+        AnalysisAttemptPolicy.RequireExact(state,batch,task,reuseConfirmed);
         var request=OpenAiClient.BuildRequest(batch,task,model);
         // Fetch, readiness and semaphore waits may cross UTC midnight. Reserve on the dispatch boundary.
         var reservation=OpenAiClient.Reservation(request,model);
         if(!batch.IsDemo)state.Reserve(model,reservation,utcNow?.Invoke()??DateTimeOffset.UtcNow);
-        state.MarkAttempted(batch.Scope,batch.Messages);
+        AnalysisAttemptPolicy.Record(state,batch,task);
         // Commit the reservation and attempt BEFORE HTTP: a crash must not release them.
         Save();
         state.EnsureRetained(batch);

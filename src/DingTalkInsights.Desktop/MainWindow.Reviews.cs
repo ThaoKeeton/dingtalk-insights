@@ -5,7 +5,7 @@ namespace DingTalkInsights.Desktop;
 public sealed partial class MainWindow
 {
     const string ReviewStorageNotice="结果已保存，但人工核实快照未能保存；请检查本机存储后重试核实。";
-    bool ReviewRecoveryBlocked=>store.ReviewMaintenanceBlocked;
+    bool ReviewRecoveryBlocked=>store.MaintenanceBlocked;
     bool SetReport(AnalysisReport report)
     {
         review=null;currentReport=report;displayedSavedReport=null;markdown=ReportRenderer.Markdown(report);displayedDemo=report.Batch.IsDemo;
