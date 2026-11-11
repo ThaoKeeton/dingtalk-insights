@@ -7,6 +7,8 @@ using System.Text.Json.Nodes;
 internal static class ReportAtomicCommitTests
 {
     static void Check(bool value,string reason){if(!value)throw new Exception(reason);}
+    static ReportReviewLedger ReadLedger(SyntheticCipher cipher,string root)=>JsonSerializer.Deserialize<ReportReviewLedger>(cipher.Unprotect(File.ReadAllBytes(Path.Combine(root,"report-reviews.dpapi"))))??throw new Exception("synthetic review ledger was empty");
+    static string SyntheticModel(MessageBatch batch)=>JsonSerializer.Serialize(new{issues=new[]{new{title="Synthetic",summary="Synthetic summary",status="resolved",communication="",nextStep="",evidence=new[]{new{messageId=batch.Messages[0].MessageId,quote=batch.Messages[0].Text}}}},pendingQuestions=Array.Empty<string>()});
     static void Run(Func<Task> action)=>action().WaitAsync(TimeSpan.FromSeconds(15)).GetAwaiter().GetResult();
     const string SyntheticTask="Synthetic atomic task";
     public static int? TryRunChild(string[] args)
@@ -343,5 +345,146 @@ internal static class ReportAtomicCommitTests
             using var store=new BusinessStore(temp.Path,new SyntheticCipher(),new FixedTime(RuntimeTests.Now.AddDays(31)));var state=store.Load();
             Check(!store.MaintenanceBlocked&&state.Reports.Count==0&&store.ReportCommits.Read() is null,"expired journal or report survived retention");
         });
+        yield return ("successful 100-report commit prunes the evicted review only after replacement",()=>Run(async()=>
+        {
+            using var temp=new RuntimeTemp();var cipher=new SyntheticCipher();using var store=new BusinessStore(temp.Path,cipher,new FixedTime(RuntimeTests.Now));
+            var state=store.Load();var batch=Demo.CreateBatch(RuntimeTests.Now) with{IsDemo=false};state.Ingest(batch);
+            for(var i=0;i<100;i++)
+            {
+                var old=Demo.Analyze(batch,"Synthetic old "+i);
+                state.Reports.Add(new(RuntimeTests.Now.AddTicks(i),batch.Scope.Key,old.Task,ReportRenderer.Markdown(old),false,batch.Messages.Min(m=>m.CreatedAt)));
+            }
+            store.Save(state);var oldest=state.Reports[0];var kept=state.Reports[1];
+            store.Reviews.Decide(state,store.Reviews.Capture(state,Demo.Analyze(batch,"Synthetic old 0")),0,true,true);
+            store.Reviews.Decide(state,store.Reviews.Capture(state,Demo.Analyze(batch,"Synthetic old 1")),0,true,true);
+            var oldestKey=ReportReviewSnapshot.Key(oldest);var keptKey=ReportReviewSnapshot.Key(kept);var sawReplace=false;
+            store.CommitTestBoundary=p=>
+            {
+                if(p!=ReportCommitPhase.CanonicalReplaced)return;
+                sawReplace=true;
+                using var canonical=JsonDocument.Parse(cipher.Unprotect(File.ReadAllBytes(Path.Combine(temp.Path,"state.dpapi"))));
+                var tasks=canonical.RootElement.GetProperty("Reports").EnumerateArray().Select(r=>r.GetProperty("Task").GetString()).ToArray();
+                Check(!tasks.Contains("Synthetic old 0")&&tasks.Contains("Synthetic old 1")&&tasks.Contains(SyntheticTask),"canonical replacement did not drop only the oldest report");
+                var during=ReadLedger(cipher,temp.Path);var fresh=state.Reports.Single(r=>r.Task==SyntheticTask);
+                Check(during.Reports.ContainsKey(oldestKey)&&during.Reports.ContainsKey(keptKey)&&!during.Reports.ContainsKey(ReportReviewSnapshot.Key(fresh))&&File.Exists(Path.Combine(temp.Path,"report-commit.dpapi")),"evicted review was removed before the replacement was durable");
+            };
+            var calls=0;
+            await new MonitorEngine(state,store).AnalyzeOnceAsync(batch,SyntheticTask,new(),(b,t,_)=>{calls++;return Task.FromResult(new ModelResult(Demo.Analyze(b,t),5,7));},RuntimeTests.Now,utcNow:()=>RuntimeTests.Now);
+            var freshSaved=state.Reports.Single(r=>r.Task==SyntheticTask);var freshView=store.Reviews.Open(state,freshSaved);var keptView=store.Reviews.Open(state,kept);var after=ReadLedger(cipher,temp.Path);
+            Check(sawReplace&&calls==1&&state.Reports.Count==100&&!state.Reports.Contains(oldest)&&state.Reports.Contains(kept)&&store.ReportCommits.Read() is null,"successful eviction changed the wrong history or left a journal");
+            Check(freshView.CanReview&&freshView.Markdown.Contains("模型判断已解决")&&!freshView.Markdown.Contains("人工确认已解决"),"new model assessment was lost or presented as a human decision");
+            Check(keptView.Report!.Issues[0].HumanConfirmed&&keptView.Decisions.Count==1,"retained human confirmation was dropped with the evicted report");
+            Check(!after.Reports.ContainsKey(oldestKey)&&after.Reports.ContainsKey(keptKey)&&after.Reports.ContainsKey(ReportReviewSnapshot.Key(freshSaved)),"evicted review survived a confirmed replacement or the new snapshot was not merged");
+            store.Dispose();
+            using var reopened=new BusinessStore(temp.Path,cipher,new FixedTime(RuntimeTests.Now));var restored=reopened.Load();
+            Check(!reopened.MaintenanceBlocked&&reopened.ReportCommits.Read() is null&&restored.Reports.Count==100&&!restored.Reports.Contains(oldest)&&reopened.Reviews.Open(restored,kept).Report!.Issues[0].HumanConfirmed,"reopen lost the retained confirmation or resurrected the evicted report");
+        }));
+        foreach(var duplicate in new[]{false,true})
+        {
+            var copied=duplicate;
+            yield return ($"{(copied?"duplicate report rows":"rewritten commit id")} conflict keeps the journal and blocks guessing",()=>
+            {
+                using var temp=new RuntimeTemp();CrashChild(temp.Path,ReportCommitPhase.CanonicalReplaced);var cipher=new SyntheticCipher();
+                var path=Path.Combine(temp.Path,"state.dpapi");var journalPath=Path.Combine(temp.Path,"report-commit.dpapi");
+                var node=JsonNode.Parse(cipher.Unprotect(File.ReadAllBytes(path)))!;
+                if(copied)node["Reports"]!.AsArray().Add(node["Reports"]![0]!.DeepClone());else node["Reports"]![0]!["CommitId"]=Guid.NewGuid().ToString("N");
+                File.WriteAllBytes(path,cipher.Protect(JsonSerializer.SerializeToUtf8Bytes(node)));var journal=File.ReadAllBytes(journalPath);
+                using var store=new BusinessStore(temp.Path,cipher,new FixedTime(RuntimeTests.Now));var state=store.Load();
+                Check(store.ReportCommitBlocked&&journal.SequenceEqual(File.ReadAllBytes(journalPath)),"conflicting commit identity was merged or the journal was rewritten");
+                Check(store.Reviews.OpenReadable(state,state.Reports[0]).Report is null,"conflict invented a model assessment");
+                try{store.PrepareReport(state);throw new Exception("conflicting journal allowed another model preparation");}catch(MonitoringFault){}
+                Check(state.Requests==1&&state.Reports.Count==(copied?2:1),"conflict recovery changed budget or deleted the canonical rows");
+            });
+        }
+        yield return ("a committed report removed before recovery clears the orphan journal and is not resurrected",()=>
+        {
+            using var temp=new RuntimeTemp();CrashChild(temp.Path,ReportCommitPhase.CanonicalReplaced);var cipher=new SyntheticCipher();
+            var path=Path.Combine(temp.Path,"state.dpapi");var node=JsonNode.Parse(cipher.Unprotect(File.ReadAllBytes(path)))!;
+            node["Reports"]=new JsonArray();File.WriteAllBytes(path,cipher.Protect(JsonSerializer.SerializeToUtf8Bytes(node)));
+            using var store=new BusinessStore(temp.Path,cipher,new FixedTime(RuntimeTests.Now));var state=store.Load();
+            Check(!store.MaintenanceBlocked&&state.Reports.Count==0&&store.ReportCommits.Read() is null&&!File.Exists(Path.Combine(temp.Path,"report-commit.dpapi")),"orphan journal blocked recovery or recreated the deleted report");
+            Check(state.Requests==1&&state.ReservedUsd>0,"orphan cleanup released the reserved attempt");
+            var batch=Demo.CreateBatch(RuntimeTests.Now) with{IsDemo=false};var calls=0;
+            try{Run(()=>new MonitorEngine(state,store).AnalyzeOnceAsync(batch,SyntheticTask,new(),(b,t,_)=>{calls++;return Task.FromResult(new ModelResult(Demo.Analyze(b,t),5,7));},RuntimeTests.Now,utcNow:()=>RuntimeTests.Now));throw new Exception("orphan cleanup allowed the same attempt to repeat");}
+            catch(SafetyException){}
+            Check(calls==0&&state.Requests==1,"missing report was treated as a new model attempt");
+        });
+        yield return ("journal reconciliation keeps a sticky invalidation and its human decision",()=>
+        {
+            using var temp=new RuntimeTemp();var cipher=new SyntheticCipher();var now=RuntimeTests.Now;
+            using(var store=new BusinessStore(temp.Path,cipher,new FixedTime(now)))
+            {
+                var state=store.Load();var batch=Demo.CreateBatch(now) with{IsDemo=false};state.Ingest(batch);store.Save(state);
+                var report=Demo.Analyze(batch,SyntheticTask);var saved=new SavedReport(now,batch.Scope.Key,SyntheticTask,ReportRenderer.Markdown(report),false,batch.Messages.Min(m=>m.CreatedAt)){CommitId=Guid.NewGuid().ToString("N")};
+                store.ReportCommits.Stage(saved,report);state.Reports.Add(saved);store.Save(state);store.Reviews.MergePending(state,store.ReportCommits.Read()!,false);
+                store.Reviews.Decide(state,store.Reviews.Open(state,saved),0,true,true);
+            }
+            var ledger=ReadLedger(cipher,temp.Path);var key=ledger.Reports.Keys.Single();ledger.Reports[key]=ledger.Reports[key] with{Invalidated=true};
+            File.WriteAllBytes(Path.Combine(temp.Path,"report-reviews.dpapi"),cipher.Protect(JsonSerializer.SerializeToUtf8Bytes(ledger)));
+            using(var restoredStore=new BusinessStore(temp.Path,cipher,new FixedTime(now)))
+            {
+                var restored=restoredStore.Load();var restoredView=restoredStore.Reviews.Open(restored,restored.Reports.Single());
+                Check(restoredStore.ReportCommits.Read() is null&&restoredView.Decisions.Count==1&&restoredView.Decisions[0].Resolved&&!restoredView.CanReview&&restoredView.Markdown.Contains("失效")&&!restoredView.Report!.Issues[0].HumanConfirmed,"recovery cleared sticky invalidation or dropped the recorded decision");
+            }
+            using var again=new BusinessStore(temp.Path,cipher,new FixedTime(now));var second=again.Load();var secondView=again.Reviews.Open(second,second.Reports.Single());
+            Check(secondView.Decisions.Count==1&&secondView.Decisions[0].Resolved&&!secondView.CanReview&&again.ReportCommits.Read() is null,"a second reopen rewrote the reconciled decision");
+        });
+        yield return ("cancellation after the model returns keeps the reservation and writes no journal",()=>Run(async()=>
+        {
+            using var temp=new RuntimeTemp();using var store=new BusinessStore(temp.Path,new SyntheticCipher(),new FixedTime(RuntimeTests.Now));
+            var state=store.Load();var batch=Demo.CreateBatch(RuntimeTests.Now) with{IsDemo=false};state.Ingest(batch);store.Save(state);
+            using var cancel=new CancellationTokenSource();var calls=0;
+            try
+            {
+                await new MonitorEngine(state,store).AnalyzeOnceAsync(batch,SyntheticTask,new(),(b,t,_)=>{calls++;cancel.Cancel();return Task.FromResult(new ModelResult(Demo.Analyze(b,t),5,7));},RuntimeTests.Now,cancel.Token,utcNow:()=>RuntimeTests.Now);
+                throw new Exception("cancelled model result was committed");
+            }
+            catch(OperationCanceledException){}
+            Check(calls==1&&state.Reports.Count==0&&state.Requests==1&&state.ReservedUsd>0&&store.ReportCommits.Read() is null,"cancellation published a report or released its reservation");
+            try{await new MonitorEngine(state,store).AnalyzeOnceAsync(batch,SyntheticTask,new(),(b,t,_)=>{calls++;return Task.FromResult(new ModelResult(Demo.Analyze(b,t),5,7));},RuntimeTests.Now,utcNow:()=>RuntimeTests.Now);throw new Exception("cancelled attempt was repeated");}
+            catch(SafetyException){}
+            Check(calls==1&&state.Requests==1,"a later pass repeated the cancelled model attempt");
+        }));
+        yield return ("unknown model result on the commit store leaves no journal and blocks a retry",()=>Run(async()=>
+        {
+            using var temp=new RuntimeTemp();var cipher=new SyntheticCipher();using var store=new BusinessStore(temp.Path,cipher,new FixedTime(RuntimeTests.Now));
+            var state=store.Load();var batch=Demo.CreateBatch(RuntimeTests.Now) with{IsDemo=false};state.Ingest(batch);store.Save(state);var calls=0;
+            try{await new MonitorEngine(state,store).AnalyzeOnceAsync(batch,SyntheticTask,new(),(_,_,_)=>{calls++;throw new IOException("synthetic unknown result");},RuntimeTests.Now,utcNow:()=>RuntimeTests.Now);throw new Exception("unknown result was accepted");}
+            catch(SafetyException){}
+            Check(calls==1&&state.Reports.Count==0&&state.Requests==1&&state.ReservedUsd>0&&store.ReportCommits.Read() is null&&!File.Exists(Path.Combine(temp.Path,"report-commit.dpapi")),"unknown result published a report or left a commit journal");
+            store.Dispose();
+            using var reopened=new BusinessStore(temp.Path,cipher,new FixedTime(RuntimeTests.Now));var restored=reopened.Load();
+            try{await new MonitorEngine(restored,reopened).AnalyzeOnceAsync(batch,SyntheticTask,new(),(_,_,_)=>{calls++;throw new IOException("synthetic unknown result");},RuntimeTests.Now,utcNow:()=>RuntimeTests.Now);throw new Exception("unknown result was retried after restart");}
+            catch(SafetyException){}
+            Check(calls==1&&restored.Requests==1&&restored.Reports.Count==0,"restart repeated or forgot the unknown attempt");
+        }));
+        yield return ("plugin canonical analysis recovers the model snapshot without a second call or leftover journal",()=>Run(async()=>
+        {
+            using var f=new RuntimeTests.Fixture();var c=f.Controller;
+            Check(await c.ConnectAsync(f.CanonicalRoot,true)&&await c.ReadOnceAsync(c.PreviewMonitoring(f.Request),true)&&await c.UseCredentialsAsync(CredentialLocation.ConnectedStore,CredentialUse.Model,true),"synthetic canonical analysis could not prepare");
+            f.Services.Analyze=(batch,task,_)=>Task.FromResult(new ModelResult(AnalysisValidator.Validate(SyntheticModel(batch),batch,task),1,1));
+            Check(await c.AnalyzeCandidatesAsync((await c.PreviewAnalysisAsync(new()))!,true),"synthetic canonical analysis failed");
+            Check(!File.Exists(Path.Combine(f.CanonicalRoot,"report-commit.dpapi"))&&c.Snapshot.Markdown.Contains("模型判断已解决")&&!c.Snapshot.Markdown.Contains("人工确认已解决")&&!c.Snapshot.Markdown.Contains("历史模型结果")&&c.Snapshot.CanReviewReport,"successful plugin commit left a journal or hid the current model assessment");
+            await c.DisconnectAsync();
+            await using var next=new InsightController(f.PluginRoot,"synthetic-next-commit-owner",f.Cipher,f.Services,f.Clock);
+            Check(await next.ConnectAsync(f.CanonicalRoot,true)&&await next.SelectHistoryAsync(next.Snapshot.History.Single()),"reconnected plugin could not open the committed report");
+            Check(next.Snapshot.Markdown.Contains("模型判断已解决")&&!next.Snapshot.Markdown.Contains("人工确认已解决")&&!next.Snapshot.Markdown.Contains("历史模型结果")&&next.Snapshot.CanReviewReport&&f.Services.Models==1&&f.Services.Sends==0,"plugin reopen lost the model assessment or repeated the model");
+        }));
+        yield return ("plugin stop during an in-flight model leaves no commit journal and keeps the reservation",()=>Run(async()=>
+        {
+            using var f=new RuntimeTests.Fixture();var c=f.Controller;
+            Check(await c.ConnectAsync(f.CanonicalRoot,true)&&await c.ReadOnceAsync(c.PreviewMonitoring(f.Request),true)&&await c.UseCredentialsAsync(CredentialLocation.ConnectedStore,CredentialUse.Model,true),"synthetic stop fixture could not prepare");
+            var entered=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);var release=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            f.Services.Analyze=async(batch,task,_)=>{entered.TrySetResult();await release.Task;return new ModelResult(AnalysisValidator.Validate(SyntheticModel(batch),batch,task),1,1);};
+            var running=c.AnalyzeCandidatesAsync((await c.PreviewAnalysisAsync(new()))!,true);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var stopping=c.StopMonitoringAsync();release.TrySetResult();
+            Check(!await running.WaitAsync(TimeSpan.FromSeconds(5)),"stopped model result was published");
+            await stopping.WaitAsync(TimeSpan.FromSeconds(5));
+            Check(f.Services.Models==1&&f.Services.Sends==0&&c.Snapshot.Requests==1&&c.Snapshot.ReservedUsd>0&&c.Snapshot.History.Count==0&&!File.Exists(Path.Combine(f.CanonicalRoot,"report-commit.dpapi")),"stop after the model returned committed a report or released its reservation");
+            await c.DisconnectAsync();
+            using var reopened=new BusinessStore(f.CanonicalRoot,f.Cipher,new FixedTime(RuntimeTests.Now));var restored=reopened.Load();
+            Check(restored.UserStopped&&restored.Recovery is null&&restored.Requests==1&&restored.Reports.Count==0&&reopened.ReportCommits.Read() is null,"stop persisted a report or dropped the cancelled reservation");
+        }));
     }
 }
