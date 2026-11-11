@@ -1,0 +1,304 @@
+using System.Globalization;
+using DingTalkInsights.Core;
+using DingTalkInsights.Runtime;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Controls;
+using Windows.ApplicationModel.DataTransfer;
+
+namespace DingTalkInsights.Workbench;
+
+/// <summary>Only code-created native controls; a page owns its subscription, the plugin owns the work.</summary>
+internal sealed class InsightPage:UserControl
+{
+    readonly PluginSession session;
+    readonly InsightController controller;
+    readonly StackPanel body=new(){Spacing=12,Padding=new Thickness(20),MaxWidth=1080,HorizontalAlignment=HorizontalAlignment.Stretch};
+    readonly TextBlock notice=Named(new TextBlock{TextWrapping=TextWrapping.Wrap,IsTextSelectionEnabled=true},"DTI 操作结果");
+    readonly TextBlock health=Named(new TextBlock{TextWrapping=TextWrapping.Wrap,IsTextSelectionEnabled=true},"DTI 监控与预算");
+    readonly TextBox task=Edit("DTI 整理事项",true);
+    readonly TextBox profile=Edit("DTI 身份 corpId:userId"),conversation=Edit("DTI 会话 ID"),start=Edit("DTI 开始时间 ISO8601"),end=Edit("DTI 结束时间 ISO8601"),executable=Edit("DTI DWS 可执行文件"),destination=Edit("DTI Webhook 目标名称");
+    readonly TextBox poll=Edit("DTI 轮询秒数"),retention=Edit("DTI 保留天数"),model=Edit("DTI 模型"),inputRate=Edit("DTI 输入单价 每百万 token"),outputRate=Edit("DTI 输出单价 每百万 token"),budget=Edit("DTI UTC 每日美元预算"),requests=Edit("DTI UTC 每日请求上限"),output=Edit("DTI 输出 token 上限");
+    readonly CheckBox demo=Named(new CheckBox{Content="使用模拟来源（每次启用默认）",IsChecked=true},"DTI 使用模拟来源");
+    readonly CheckBox upload=Named(new CheckBox{Content="本次监控允许模型整理（需单独批准凭据）",IsChecked=false},"DTI 监控模型整理");
+    readonly CheckBox dwsSearch=Named(new CheckBox{Content="搜索 DWS；未选择时只搜索本机索引"},"DTI 搜索 DWS");
+    readonly TextBox keywords=Edit("DTI 搜索词");
+    readonly TextBox candidates=ReadOnly("DTI 来源候选"),report=ReadOnly("DTI 待核实结果");
+    readonly ComboBox conversations=Named(new ComboBox{Header="本次发现的会话（选择后仍需保存配置）",HorizontalAlignment=HorizontalAlignment.Stretch},"DTI 发现会话");
+    readonly ComboBox history=Named(new ComboBox{Header="本机加密历史",HorizontalAlignment=HorizontalAlignment.Stretch},"DTI 历史结果");
+    readonly NumberBox issue=Named(new NumberBox{Header="复核的问题序号（从 1 开始）",Minimum=1,Value=1,SpinButtonPlacementMode=NumberBoxSpinButtonPlacementMode.Inline},"DTI 复核问题序号");
+    readonly PasswordBox key=Password("DTI 新 OpenAI key"),webhook=Password("DTI 新 Webhook URL"),secret=Password("DTI 新 Webhook 签名密钥");
+    readonly ComboBox credentialLocation=Named(new ComboBox{Header="凭据来源",SelectedIndex=0,HorizontalAlignment=HorizontalAlignment.Stretch},"DTI 凭据来源");
+    readonly CheckBox useModel=Named(new CheckBox{Content="仅模型用途"},"DTI 凭据用于模型"),useWebhook=Named(new CheckBox{Content="仅人工 Webhook 用途"},"DTI 凭据用于 Webhook");
+    Button? begin;
+    SnapshotBinding? binding;
+    IDisposable? monitorBinding;
+    bool loaded,rendering,rendered;
+    string lastAction="none",actionOutcome="none",saveStage="none",failureCategory="none";
+    bool? actionStartedOnUi,saveResumedOnUi;
+    readonly NativeActionGate actions;
+    readonly PageNotice pageNotice=new();
+    long attachment;
+
+    public InsightPage(PluginSession session,bool settings,NativeActionGate? actions=null)
+    {
+        this.session=session;controller=session.Controller;this.actions=actions??session.Actions;
+        Named(this,settings?"DTI 原生设置":"DTI 原生工作区");
+        HorizontalContentAlignment=HorizontalAlignment.Stretch;Content=new ScrollViewer{HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,HorizontalContentAlignment=HorizontalAlignment.Stretch,Content=body};
+        body.Children.Add(Text(settings?"钉钉沟通事项 · 设置":"钉钉沟通事项",26));
+        body.Children.Add(Text("默认模拟。安装、启用和导航不会读取聊天、使用凭据、调用模型或发送。结果展示模型判断和来源；人工核实可选，不作人员评价。"));
+        body.Children.Add(notice);body.Children.Add(health);
+        Add(task);task.Text=controller.Snapshot.Draft;
+        task.TextChanged+=(_,_)=>{if(!rendering&&loaded&&controller.Snapshot.Active)controller.SetDraft(task.Text);};
+        if(settings)BuildSettings();else BuildWorkspace();
+        Populate();
+        Loaded+=(_,_)=>
+        {
+            if(loaded)return;loaded=true;attachment++;
+            binding=new(controller,action=>DispatcherQueue.TryEnqueue(()=>action()),Render);
+            var epoch=attachment;
+            monitorBinding=session.Monitoring?.Subscribe(()=>DispatcherQueue.TryEnqueue(()=>{if(loaded&&attachment==epoch)Render(controller.Snapshot);}));
+        };
+        Unloaded+=(_,_)=>{loaded=false;rendered=false;attachment++;binding?.Dispose();binding=null;monitorBinding?.Dispose();monitorBinding=null;key.Password="";webhook.Password="";secret.Password="";};
+    }
+    void BuildWorkspace()
+    {
+        Add(demo,upload);
+        Add(Action("打开模拟本机库","DTI 打开模拟",async()=>{await Work(()=>controller.OpenDemoAsync());}));
+        body.Children.Add(Text("身份、会话、时间、DWS 路径与限额在插件设置中明确填写并保存。真实来源须先连接标准独立版账本；单次读取和按需上传按预览授权，持续监控按已批准范围自动整理。"));
+        Add(Action("读取一次…","DTI 读取一次",Read),Action("预览并开始监控…","DTI 开始监控",Begin,out begin),Action("停止并等待退役","DTI 停止监控",async()=>{await Work((session.Monitoring??throw new RuntimeFault(RuntimeFailure.Inactive)).StopAsync);},stop:true));
+        Add(keywords,dwsSearch,Action("搜索…","DTI 搜索",Search));
+        report.Header="整理结果与模型判断";
+        Add(candidates,Action("预览并整理候选…","DTI 整理候选",Analyze),report);
+        body.Children.Add(Text("如需人工核实，可选的确认及撤销会加密保存到此报告，重开历史可恢复；原文修订或过期后失效。旧版纯文本历史可查看与复制。"));
+        Add(issue,Action("复核证据并确认解决…","DTI 人工确认解决",()=>Resolve(true)),Action("撤销此项人工确认…","DTI 撤销人工确认",()=>Resolve(false)),Action("复制 Markdown","DTI 复制 Markdown",Copy));
+        Add(history);history.SelectionChanged+=async(_,_)=>
+        {if(!rendering&&history.SelectedItem is HistoryRow selected)await Safe(async()=>{await Work(()=>controller.SelectHistoryAsync(selected.Value));});};
+        Add(Action("预览人工发送…","DTI 人工发送",Send));
+    }
+    void BuildSettings()
+    {
+        body.Children.Add(Text("配置载入不会恢复采集、模型或发送权限。身份、会话、时间与任务草稿只存入本机加密文件；宿主 JSON 只存非敏感限额与模型偏好。"));
+        Add(Action("载入已保存配置","DTI 载入设置",async()=>{await session.LoadAsync();Populate();ShowNotice("已载入配置；尚未连接或开始。");}),Action("保存本机配置","DTI 保存设置",SaveSettings));
+        Add(profile,conversation,start,end,executable,poll,retention,model,inputRate,outputRate,output,budget,requests,destination);
+        Add(Action("预览并发现会话…","DTI 发现会话操作",Discover),conversations);
+        conversations.SelectionChanged+=(_,_)=>{if(!rendering&&conversations.SelectedItem is ConversationRow row)conversation.Text=row.Value.ConversationId;};
+        Add(Action("连接标准独立版账本…","DTI 连接标准账本",Connect),Action("断开并等待释放","DTI 断开",async()=>{await Work(controller.DisconnectAsync);}));
+        body.Children.Add(Text("连接同一物理 state.dpapi 与旧版锁；不会复制活动账本、强制解锁或导入恢复授权。断开/停用并等候退役后，可回独立版明确开始。旧 0.2 的人工发送无法识别发送侧账，回滚期间请勿发送。"));
+        if(controller.HostCredentialsAvailable)credentialLocation.Items.Add(new CredentialChoice(CredentialLocation.Host,"Workbench 宿主加密凭据"));
+        credentialLocation.Items.Add(new CredentialChoice(CredentialLocation.Plugin,"插件本机 DPAPI 凭据"));
+        credentialLocation.Items.Add(new CredentialChoice(CredentialLocation.ConnectedStore,"已连接标准独立版 DPAPI 凭据（只读）"));credentialLocation.SelectedIndex=0;
+        Add(credentialLocation,useModel,useWebhook,Action("仅批准所选凭据用途…","DTI 批准凭据用途",UseCredentials));
+        Add(Action("撤销凭据用途并停止工作","DTI 撤销凭据用途",RevokeCredentials,stop:true));
+        body.Children.Add(Text("输入框始终从空值开始，既有值永不回显。保存会替换所选宿主或插件来源的三个字段；空字段删除，旧用途批准撤销，独立版保险箱只读。宿主完整保存中断或单独修改字段后，该批次不可用，请重新输入并完整保存。保存与批准用途是两次独立操作。"));
+        Add(key,webhook,secret,Action("加密保存新输入凭据…","DTI 保存新凭据",SaveCredentials));
+        Add(Action("删除所选来源的凭据…","DTI 删除所选凭据",DeleteCredentials));
+        Add(Action("清理本机内容索引…","DTI 清理索引",async()=>
+        {if(await Confirm("清理索引","清理当前连接的本机消息、结果、断点、人工核实，以及来源和事项的全部模型尝试记录。未知结果可能已处理并计费；清理后再次整理同一事项可能重复处理或计费。核实失效屏障会解除；当日预算、请求和发送尝试保留。不会修改钉钉原始聊天。"))await Work(()=>controller.ClearIndexAsync(true));}));
+        body.Children.Add(Text("帮助与限制",20));
+        body.Children.Add(Text("监控为官方 DWS 会话消息轮询，不是桌面捕获。只读模式不调用模型；未知/不完整来源不会推进完整断点。模型失败、预算延后、权限和迁移失败均显示安全类别。关闭/睡眠/注销期间不保证实时采集。宿主 0.2 注册一个须经插件预览确认的监控任务，不允许宿主通用开始或自动恢复。停止监控保留明确连接与已批准用途；撤销凭据用途会停止所有工作并保留账本；停用/退出彻底退役，再次开始须新确认。宿主凭据不可用时须显式选择其他来源，不自动切换。宿主包服务须重启前维护；程序集保持加载至退出。人工 Webhook 结果不确定时不自动重发，重发可能重复。费用单价是用户输入的本地估算，不是实时报价。"));
+    }
+    // Safe metadata only: never return entered values, content, credentials or notice text.
+    public object ActionObservation=>new{Ready=loaded&&rendered&&binding is not null,Loaded=loaded,Rendered=rendered,Attachment=attachment,
+        Busy=actions.IsBusy,LastAction=lastAction,Outcome=actionOutcome,SaveStage=saveStage,FailureCategory=failureCategory,
+        ActionStartedOnUi=actionStartedOnUi,SaveResumedOnUi=saveResumedOnUi,StatusOrigin=pageNotice.Origin};
+    async Task SaveSettings()
+    {
+        saveStage="capture";CaptureSettings();saveStage="persist";await session.SaveAsync();
+        saveResumedOnUi=DispatcherQueue.HasThreadAccess;saveStage="completed";
+        ShowNotice("配置已保存；未授予业务或凭据权限。");
+    }
+    void Populate()
+    {
+        rendering=true;
+        try
+        {
+            var d=session.Draft;var p=session.Preferences;task.Text=controller.Snapshot.Draft;profile.Text=d.Profile;conversation.Text=d.ConversationId;
+            start.Text=d.Start.ToString("O");end.Text=d.End.ToString("O");executable.Text=d.Executable;destination.Text=d.DestinationName;
+            poll.Text=p.PollSeconds.ToString(CultureInfo.InvariantCulture);retention.Text=p.RetentionDays.ToString(CultureInfo.InvariantCulture);model.Text=p.Model.Model;
+            inputRate.Text=F(p.Model.InputUsdPerMillion);outputRate.Text=F(p.Model.OutputUsdPerMillion);budget.Text=F(p.Model.DailyBudgetUsd);
+            requests.Text=p.Model.MaxRequestsPerDay.ToString(CultureInfo.InvariantCulture);output.Text=p.Model.MaxOutputTokens.ToString(CultureInfo.InvariantCulture);
+        }
+        finally{rendering=false;}
+    }
+    void CaptureSettings()
+    {
+        if(!DateTimeOffset.TryParse(start.Text,CultureInfo.InvariantCulture,DateTimeStyles.None,out var from)||
+            !DateTimeOffset.TryParse(end.Text,CultureInfo.InvariantCulture,DateTimeStyles.None,out var to)||
+            !HasOffset(start.Text)||!HasOffset(end.Text)||to<=from)throw new RuntimeFault(RuntimeFailure.Configuration);
+        var prefs=new Preferences{PollSeconds=I(poll.Text),RetentionDays=I(retention.Text),Model=new(){Model=model.Text.Trim(),InputUsdPerMillion=D(inputRate.Text),OutputUsdPerMillion=D(outputRate.Text),DailyBudgetUsd=D(budget.Text),MaxRequestsPerDay=I(requests.Text),MaxOutputTokens=I(output.Text)}};
+        prefs.Validate();session.Preferences=prefs;
+        session.Draft=new(){Profile=profile.Text.Trim(),ConversationId=conversation.Text.Trim(),Start=from,End=to,Executable=executable.Text.Trim(),DestinationName=destination.Text.Trim(),Task=task.Text};
+        controller.SetDraft(task.Text);
+    }
+    void Render(RuntimeSnapshot snapshot)
+    {
+        if(!loaded||!snapshot.Active)return;
+        rendering=true;
+        try
+        {
+            if(task.Text!=snapshot.Draft)task.Text=snapshot.Draft;
+            notice.Text=pageNotice.ApplyRuntime(snapshot.Notice);
+            health.Text=$"来源：{snapshot.Connection} · {(session.Monitoring?.IsStopping==true?"停止中，仍持有工作与租约":snapshot.IsMonitoring?"监控运行中":"已停止")} · {snapshot.Health.Status}\n{MonitorNotices.For(snapshot.Health.Failure)}\n下次检查：{snapshot.Health.NextReadAt:O} · 模型延后：{snapshot.Health.ModelDeferredUntil:O}\nUTC 日：{snapshot.BudgetDay} · 预留 ${F(snapshot.ReservedUsd)} · 请求 {snapshot.Requests} · 保留 {snapshot.RetentionDays} 天";
+            candidates.Text=string.Join("\n\n",snapshot.Candidates.Select(m=>$"[{m.MessageId}] {m.CreatedAt:O} · {m.Sender}\n{m.Text}"));
+            report.Text=snapshot.Markdown;
+            conversations.ItemsSource=snapshot.Conversations.Select(c=>new ConversationRow(c)).ToArray();
+            var selected=(history.SelectedItem as HistoryRow)?.Value;
+            history.ItemsSource=snapshot.History.Reverse().Select(h=>new HistoryRow(h)).ToArray();
+            if(selected is not null)history.SelectedItem=((IEnumerable<HistoryRow>)history.ItemsSource).FirstOrDefault(h=>h.Value==selected);
+            if(begin is not null)begin.IsEnabled=!snapshot.IsMonitoring&&!snapshot.IsBusy&&session.Monitoring is {IsStopping:false};
+            rendered=true;
+        }
+        finally{rendering=false;}
+    }
+    async Task Read()
+    {
+        var request=session.CaptureRequest(demo.IsChecked==true,false);
+        var preview=controller.PreviewMonitoring(request);
+        if(await Confirm("读取本次范围",$"{request.Source}\n本次确切有界窗口：{preview.NextRead.Display}\nDWS：{request.Executable}\n明确采用保留 {request.RetentionDays} 天；本次窗口在所选保留期内：{preview.WithinRetention}\n确认后先按该策略清理 {preview.ExpiringMessages} 条旧消息 / {preview.ExpiringReports} 份旧结果并持久化，再读取上述固定窗口。超期窗口会在任何来源检查前拒绝；效果改变须重新预览。\n原文只写入本机加密账本，本次不调用模型。"))await Work(()=>controller.ReadOnceAsync(preview,true));
+    }
+    async Task Begin()
+    {
+        var request=session.CaptureRequest(demo.IsChecked==true,upload.IsChecked==true);
+        var preview=controller.PreviewMonitoring(request);
+        if(await Confirm("本次监控预览",$"来源 {preview.Request.Source} · {preview.Request.Profile} / {preview.Request.ConversationId}\n下一窗口：{preview.NextRead.Display}\n既有连续进度：{preview.PreviousCoveredThrough:O}\n放弃缺口：{preview.AbandonedGap}\n保留期内：{preview.WithinRetention} · 将过期消息 {preview.ExpiringMessages} / 结果 {preview.ExpiringReports}\nDWS：{request.Executable}\n每 {request.PollSeconds} 秒；保留 {request.RetentionDays} 天。模型：{(request.UploadToModel?request.Model.Model:"只读，不调用")}\n输入 ${F(request.Model.InputUsdPerMillion)} / 输出 ${F(request.Model.OutputUsdPerMillion)} 每百万 token\n预算 ${F(request.Model.DailyBudgetUsd)} / UTC 日，{request.Model.MaxRequestsPerDay} 请求；输出上限 {request.Model.MaxOutputTokens}。\n不自动 Webhook，停用和退出后须重新批准。"))if(!await Work(()=>(session.Monitoring??throw new RuntimeFault(RuntimeFailure.Inactive)).StartAsync(preview,true)))throw new RuntimeFault(RuntimeFailure.Configuration);
+    }
+    async Task Search()
+    {
+        var d=session.Draft;var local=demo.IsChecked==true;var request=session.CaptureRequest(local,false);
+        var scope=new QueryScope(request.Profile,request.ConversationId,local?request.Start:d.Start,local?DateTimeOffset.UtcNow:d.End);
+        var text=keywords.Text;var useDws=dwsSearch.IsChecked==true;var path=request.Executable;
+        if(await Confirm("搜索本次范围",$"{scope.Display}\n搜索词：{text}\n来源：{(useDws?"DWS，仅本次查询":"本机加密索引")}\nDWS：{path}\n本次不调用模型。"))await Work(()=>controller.SearchAsync(path,scope,text,useDws,true));
+    }
+    async Task Discover()
+    {
+        CaptureSettings();var d=session.Draft;
+        var path=d.Executable;var identity=d.Profile;var from=d.Start;var to=d.End;
+        if(await Confirm("发现本次范围的会话",$"身份：{identity}\n{from:O} 至 {to:O}（不含结束）\nDWS：{path}\n仅发现会话，不采集原文或调用模型。"))await Work(()=>controller.DiscoverAsync(path,identity,from,to,true));
+    }
+    async Task Analyze()
+    {
+        var preview=await Work(()=>controller.PreviewAnalysisAsync(session.Preferences.Model));if(preview is null)return;
+        var reuse=preview.PreviouslyAttempted>0;
+        if(reuse&&!await Confirm("确认是不同的新事项",
+            $"事项：{preview.Task}\n范围：{preview.Batch.Scope.Display}\n本次 {preview.Batch.Messages.Count} 条，其中 {preview.PreviouslyAttempted} 条已有尝试；同事项已排除 {preview.SkippedSameTask} 条。\n先前结果可能未知或已计费，旧记录无法证明事项是否相同。只有确认这确是不同事项并接受再次处理和可能再次计费，才进入下一步精确请求预览。修改措辞或特殊字符可能被视为新事项；不会自动重试旧事项。",
+            "确认不同事项，继续预览"))return;
+        var exact=OpenAiClient.BuildRequest(preview.Batch,preview.Task,preview.Model);
+        if(await Confirm(preview.Batch.IsDemo?"模拟整理预览（不联网）":"上传模型预览",
+            $"精确范围：{preview.Batch.Scope.Display}\n已排除同事项来源 {preview.SkippedSameTask} 条；其中复用旧来源 {preview.PreviouslyAttempted} 条。\n模型 {preview.Model.Model}；预估上限预留 ${F(OpenAiClient.Reservation(exact,preview.Model))}；UTC 日预算 ${F(preview.Model.DailyBudgetUsd)} / {preview.Model.MaxRequestsPerDay} 请求\n以下为本次固定请求正文，确认后使用同一预览：\n{exact}"))await Work(()=>controller.AnalyzeCandidatesAsync(preview,true,reuseConfirmed:reuse));
+    }
+    async Task Resolve(bool resolved)
+    {
+        var index=(int)issue.Value-1;
+        var preview=await Work(()=>controller.PreviewResolutionAsync(index,resolved));if(preview is null)return;
+        var evidence=string.Join("\n\n",preview.Evidence.Select(e=>$"{e.Message.MessageId} / {e.Message.CreatedAt:O}\n{e.Quote}"));
+        var instruction=resolved?"确认你已回原会话核对证据及解决结果；修复提交或有人回复不等于解决。":"撤销此报告该项人工确认，恢复原报告的模型状态。本次不调用模型或修改其他报告。";
+        if(await Confirm(resolved?"复核原文证据":"撤销人工确认",$"问题 {preview.Index+1}：{preview.Title}\n{instruction}\n{evidence}"))
+            await Work(()=>controller.ConfirmResolvedAsync(preview,true));
+    }
+    Task Copy()
+    {
+        var content=controller.Snapshot.Markdown;if(content.Length==0)throw new RuntimeFault(RuntimeFailure.Retention);
+        var data=new DataPackage();data.SetText(content);Clipboard.SetContent(data);ShowNotice("已复制当前整理结果与来源；请确认分享范围。");return Task.CompletedTask;
+    }
+    async Task Send()
+    {
+        var name=session.Draft.DestinationName;var preview=await Work(()=>controller.PreviewSendAsync(name));if(preview is null)return;
+        var prior=preview.PreviousStatus is null?"没有匹配的已知发送记录":$"已知尝试 {preview.Attempts} / {preview.PreviousStatus}";
+        if(preview.LegacyFormatRisk)prior+="；旧格式或历史人工状态无法完整核对";
+        if(!await Confirm("人工发送精确预览",$"目标名称 {preview.DestinationName}\n目标指纹（遮罩） …{preview.DestinationFingerprint}\n{prior}\n精确正文：\n{preview.Markdown}"))return;
+        var retry=false;
+        if(preview.AlreadyAttempted)
+        {
+            retry=await Confirm("重复送达风险：独立人工重试确认",preview.LegacyFormatRisk?"此报告有旧版格式、历史人工状态或来源变化，无法完整核对所有先前发送格式；请先检查接收群。明确确认后才尝试一次。":"同一目标与报告或正文已有发送尝试。请先到接收群核对；即使先前显示失败或未知，本次人工重试仍可能重复送达。明确确认后才尝试一次。","承担重复风险并重试一次");
+            if(!retry)return;
+        }
+        await Work(()=>controller.SendReportAsync(preview,true,retry));
+    }
+    async Task Connect()
+    {
+        if(!await Confirm("审查标准独立版连接","继续后才解析当前用户的标准独立版 DingTalkInsights 目录。随后将显示确切路径并再次确认；只允许标准目录，任意副本无法阻止标准旧应用同时采集。请先停止并退出独立版。"))return;
+        var root=session.Location.Resolve(true)!;
+        if(await Confirm("连接此确切标准账本",$"{root}\n连接同一物理账本与旧版锁，保留断点、尝试、UTC 预算和发送侧账；撤销旧恢复授权，不自动读取来源、不导入或使用凭据。先断开模拟库。"))
+            await Work(()=>session.Location.ConnectAsync(controller,root,true));
+    }
+    async Task UseCredentials()
+    {
+        var location=SelectedCredentialLocation;
+        var purposes=(useModel.IsChecked==true?CredentialUse.Model:CredentialUse.None)|(useWebhook.IsChecked==true?CredentialUse.Webhook:CredentialUse.None);
+        if(await Confirm("单独批准凭据用途",$"来源：{location}；仅用于：{purposes}\n现有密文不会回显或复制到另一保险箱。保存新值、连接、信任插件和开始监控均不能替代本次批准。"))await Work(()=>controller.UseCredentialsAsync(location,purposes,true));
+    }
+    async Task SaveCredentials()
+    {
+        var entered=new Credentials(key.Password,webhook.Password,secret.Password);var location=SelectedCredentialLocation;
+        try
+        {
+            if(location==CredentialLocation.ConnectedStore){ShowNotice("已连接的独立版凭据只读；请明确选择宿主或插件来源保存新输入。");return;}
+            if(await Confirm("加密保存新输入",$"来源：{credentialLocation.SelectedItem}\n用本次输入替换该来源三个凭据字段；空字段删除。旧用途批准撤销，不授予使用权限。不会改其他来源或独立版保险箱。输入值不会显示在此预览或日志。宿主批次保存中断后须重新完整保存。"))await Work(()=>controller.SaveCredentialsAsync(location,entered,true));
+        }
+        finally{key.Password="";webhook.Password="";secret.Password="";}
+    }
+    CredentialLocation SelectedCredentialLocation=>credentialLocation.SelectedItem is CredentialChoice choice?choice.Location:throw new RuntimeFault(RuntimeFailure.Credentials);
+    async Task RevokeCredentials()
+    {
+        // Invalidate synchronously before awaiting registry persistence or a lower provider ignoring cancellation.
+        var retired=controller.RevokeCredentialsAsync();
+        await Work(async()=>{if(session.Monitoring is {} monitor)await monitor.StopAsync();await retired;});
+        ShowNotice("已撤销凭据用途并停止工作；保存的密文、业务账本、预算与发送尝试保留。");
+    }
+    async Task DeleteCredentials()
+    {
+        var location=SelectedCredentialLocation;
+        if(location==CredentialLocation.ConnectedStore){ShowNotice("已连接的独立版凭据只读；此处不会删除该保险箱。");return;}
+        if(await Confirm("删除所选来源凭据",$"来源：{credentialLocation.SelectedItem}\n删除该来源三个字段并撤销用途批准；业务账本、断点、预算、发送尝试和其他凭据来源保留。"))await Work(()=>controller.DeleteCredentialsAsync(location,true));
+    }
+    async Task<bool> Confirm(string title,string content,string primary="确认本次操作")
+    {
+        var epoch=attachment;
+        var text=ReadOnly("DTI 本次授权正文");text.Text=content;text.MinHeight=180;text.MaxHeight=450;
+        var dialog=new ContentDialog{XamlRoot=XamlRoot,Title=title,Content=text,PrimaryButtonText=primary,CloseButtonText="取消",DefaultButton=ContentDialogButton.Close};
+        var result=await dialog.ShowAsync();return loaded&&attachment==epoch&&controller.Snapshot.Active&&result==ContentDialogResult.Primary;
+    }
+    async Task Safe(Func<Task> action,bool stop=false,string actionId="selection")
+    {
+        lastAction=actionId;
+        if(!loaded||!controller.Snapshot.Active){actionOutcome=loaded?"inactive":"not-loaded";return;}
+        var epoch=attachment;
+        var accepted=await actions.RunAsync(async()=>
+        {
+            actionOutcome="running";failureCategory="none";actionStartedOnUi=DispatcherQueue.HasThreadAccess;
+            notice.Text=pageNotice.BeginAction(controller.Snapshot.Notice);
+            try{await action();actionOutcome="completed";}
+            catch(SafetyException error)
+            {
+                actionOutcome="failed";failureCategory=error is RuntimeFault fault?fault.Category.ToString():error is MonitoringFault monitor?monitor.Category.ToString():"Validation";
+                if(loaded&&attachment==epoch)ShowNotice(error.Message);
+            }
+            catch(Exception error)
+            {
+                actionOutcome="failed";failureCategory=error.GetType().Name;
+                if(loaded&&attachment==epoch)ShowNotice("本机操作未完成；未显示传输正文或凭据，请核对配置或存储。");
+            }
+        },stop);
+        if(!accepted)actionOutcome="busy";
+    }
+    void ShowNotice(string message)=>notice.Text=pageNotice.ShowLocal(message,controller.Snapshot.Notice);
+    static Task<T> Work<T>(Func<Task<T>> action)=>PluginSession.Worker(action);
+    static Task Work(Func<Task> action)=>PluginSession.Worker(action);
+    Button Action(string label,string name,Func<Task> action,bool stop=false)
+    {var button=Named(new Button{Content=label,HorizontalAlignment=HorizontalAlignment.Left},name);button.Click+=async(_,_)=>await Safe(action,stop,name);return button;}
+    Button Action(string label,string name,Func<Task> action,out Button? button)=>button=Action(label,name,action);
+    void Add(params UIElement[] elements){foreach(var element in elements)body.Children.Add(element);}
+    static T Named<T>(T value,string name)where T:DependencyObject{AutomationProperties.SetName(value,name);return value;}
+    static TextBlock Text(string text,double size=14)=>new(){Text=text,FontSize=size,TextWrapping=TextWrapping.Wrap,IsTextSelectionEnabled=true};
+    static TextBox Edit(string name,bool multiline=false)=>Named(new TextBox{Header=name[4..],AcceptsReturn=multiline,TextWrapping=TextWrapping.Wrap,MaxLength=multiline?2000:8192,HorizontalAlignment=HorizontalAlignment.Stretch},name);
+    static TextBox ReadOnly(string name)=>Named(new TextBox{Header=name[4..],IsReadOnly=true,AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,MinHeight=110,MaxHeight=450,HorizontalAlignment=HorizontalAlignment.Stretch},name);
+    static PasswordBox Password(string name)=>Named(new PasswordBox{Header=name[4..],Password="",MaxLength=8192,HorizontalAlignment=HorizontalAlignment.Stretch},name);
+    static string F(decimal value)=>value.ToString(CultureInfo.InvariantCulture);
+    static int I(string value)=>int.TryParse(value,NumberStyles.Integer,CultureInfo.InvariantCulture,out var n)?n:throw new RuntimeFault(RuntimeFailure.Configuration);
+    static decimal D(string value)=>decimal.TryParse(value,NumberStyles.Number,CultureInfo.InvariantCulture,out var n)?n:throw new RuntimeFault(RuntimeFailure.Configuration);
+    static bool HasOffset(string text)=>System.Text.RegularExpressions.Regex.IsMatch(text,@"(Z|[+-]\d\d:\d\d)$");
+    sealed record ConversationRow(Conversation Value){public override string ToString()=>$"{Value.Name} · {Value.ConversationId}";}
+    sealed record HistoryRow(SavedReport Value){public override string ToString()=>$"{Value.CreatedAt:yyyy-MM-dd HH:mm} · {(Value.IsDemo?"模拟 · ":"")}{Value.Task}";}
+    sealed record CredentialChoice(CredentialLocation Location,string Label){public override string ToString()=>Label;}
+}

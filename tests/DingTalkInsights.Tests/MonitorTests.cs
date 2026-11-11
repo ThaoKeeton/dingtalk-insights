@@ -1,0 +1,101 @@
+using DingTalkInsights.Core;
+
+internal static class MonitorTests
+{
+    static void Assert(bool b){if(!b)throw new Exception("assertion failed");}
+    static void Denied(Action f){try{f();}catch(SafetyException){return;}throw new Exception("expected SafetyException");}
+    public static IEnumerable<(string,Action)> All()
+    {
+        yield return ("增量合并重复批次不重复入库",()=>{var s=new InsightState();var b=Demo.CreateBatch();Assert(s.Ingest(b)==4);Assert(s.Ingest(b)==0&&s.Messages.Count==4);});
+        yield return ("不完整批次不能推进断点",()=>{var s=new InsightState();var b=Demo.CreateBatch()with{Complete=false};s.Ingest(b);Assert(!s.Watermarks.ContainsKey(b.Scope.Key));});
+        yield return ("完整批次推进断点且下一次保留重叠窗口",()=>{var s=new InsightState();var b=Demo.CreateBatch();s.Ingest(b);var next=MonitorEngine.NextScope(s,b.Scope,b.Scope.End.AddHours(1));Assert(s.Watermarks[b.Scope.Key]==b.Scope.End&&next.Start==b.Scope.End.AddMinutes(-2));});
+        yield return ("断点积压按一小时追赶不会跳过区间",()=>{var s=new InsightState();var b=Demo.CreateBatch();var next=MonitorEngine.NextScope(s,b.Scope,b.Scope.Start.AddDays(2));Assert(next.Start==b.Scope.Start&&next.End==b.Scope.Start.AddHours(1));});
+        yield return ("同消息编辑更新修订而非增加重复记录",()=>{var s=new InsightState();var b=Demo.CreateBatch();s.Ingest(b);var items=b.Messages.ToArray();items[0]=items[0]with{Text="修订后的模拟消息"};Assert(s.Ingest(b with{Messages=items})==1&&s.Messages.Count==4);});
+        yield return ("本地搜索仅在所选身份、会话和时间内",()=>{var s=new InsightState();var b=Demo.CreateBatch();s.Ingest(b);var r=LocalSearch.Find(s,b.Scope,"登录");Assert(r.Messages.Count==2&&!r.Complete);var other=b.Scope with{Profile="another:user"};Assert(LocalSearch.Find(s,other,"登录").Messages.Count==0);});
+        yield return ("预算达到上限拒绝新请求",()=>{var s=new InsightState();var m=new ModelSettings{DailyBudgetUsd=0.001m};var today=DateTimeOffset.Parse("2026-11-06T10:00:00Z");s.Reserve(m,0.0008m,today);Denied(()=>s.Reserve(m,0.0008m,today));Assert(s.Requests==1&&s.ReservedUsd==0.0008m);});
+        yield return ("预算按 UTC 日期更新并保留本日请求数限制",()=>{var s=new InsightState();var m=new ModelSettings{MaxRequestsPerDay=1};var today=DateTimeOffset.Parse("2026-11-06T10:00:00Z");s.Reserve(m,0.001m,today);Denied(()=>s.Reserve(m,0.001m,today));s.Reserve(m,0.001m,today.AddDays(1));Assert(s.Requests==1);});
+        yield return ("分析尝试持久标识防止未知结果自动重试",()=>{var s=new InsightState();var b=Demo.CreateBatch();s.Ingest(b);var pending=s.Unanalyzed(b.Scope,40);Assert(pending.Count==4);s.MarkAttempted(b.Scope,pending);Assert(s.Unanalyzed(b.Scope,40).Count==0);});
+        yield return ("加密状态可恢复断点且文件不含聊天原文",()=>{var path=Path.Combine(Path.GetTempPath(),"insights-state-test-"+Guid.NewGuid());var cipher=new TestCipher();try{using(var repo=new EncryptedStateStore(path,cipher)){var s=new InsightState();s.Ingest(Demo.CreateBatch());repo.Save(s);Assert(!System.Text.Encoding.UTF8.GetString(File.ReadAllBytes(path)).Contains("登录"));}using(var repo=new EncryptedStateStore(path,cipher)){var s=repo.Load();Assert(s.Messages.Count==4&&s.Watermarks.Count==1);}}finally{File.Delete(path);File.Delete(path+".lock");}});
+        yield return ("篡改加密状态不能被当作空状态覆盖",()=>{var path=Path.Combine(Path.GetTempPath(),"insights-corrupt-test-"+Guid.NewGuid());try{File.WriteAllText(path,"bad");using var repo=new EncryptedStateStore(path,new TestCipher());Denied(()=>repo.Load());}finally{File.Delete(path);File.Delete(path+".lock");}});
+        yield return ("不连续覆盖区间不能跳过历史缺口",()=>{var s=new InsightState();var b=Demo.CreateBatch();s.Ingest(b with{Scope=b.Scope with{End=b.Scope.Start.AddHours(1)}});s.Ingest(b with{Scope=b.Scope with{Start=b.Scope.Start.AddHours(4),End=b.Scope.Start.AddHours(5)},Messages=Array.Empty<SourceMessage>()});var next=MonitorEngine.NextScope(s,b.Scope,b.Scope.Start.AddHours(6));Assert(next.End==b.Scope.Start.AddHours(2));});
+        yield return ("本机时间回退不能重置当日预算",()=>{var s=new InsightState();var model=new ModelSettings();var now=DateTimeOffset.Parse("2026-11-06T10:00:00Z");s.Reserve(model,0.001m,now);Denied(()=>s.Reserve(model,0.001m,now.AddDays(-1)));Assert(s.Requests==1);});
+        yield return ("模型未知失败后重启不自动重试同一修订",()=>{var repo=new MemoryStore();var s=new InsightState();var b=Demo.CreateBatch();var engine=new MonitorEngine(s,repo);var calls=0;Task<MessageBatch> Fetch(QueryScope scope,CancellationToken _)=>Task.FromResult(b with{Scope=scope,Messages=b.Messages.Where(m=>m.CreatedAt>=scope.Start&&m.CreatedAt<scope.End).ToArray()});Task<ModelResult> Analyze(MessageBatch batch,string task,CancellationToken _){calls++;Assert(repo.Load().Attempted.Count==batch.Messages.Count);throw new SafetyException("synthetic unknown result");}Denied(()=>engine.TickAsync(b.Scope,Fetch,Analyze,new ModelSettings(),30,b.Scope.End).GetAwaiter().GetResult());var restored=repo.Load();new MonitorEngine(restored,repo).TickAsync(b.Scope,Fetch,Analyze,new ModelSettings(),30,b.Scope.End.AddMinutes(5)).GetAwaiter().GetResult();Assert(calls==1);});
+        yield return ("状态保存失败时不能调用模型",()=>{var b=Demo.CreateBatch();var calls=0;var engine=new MonitorEngine(new InsightState(),new FailingStore());Task<MessageBatch> Fetch(QueryScope scope,CancellationToken _)=>Task.FromResult(b with{Scope=scope,Messages=b.Messages.Where(m=>m.CreatedAt>=scope.Start&&m.CreatedAt<scope.End).ToArray()});Task<ModelResult> Analyze(MessageBatch batch,string task,CancellationToken _){calls++;return Task.FromResult(new ModelResult(Demo.Analyze(batch),0,0));}Denied(()=>engine.TickAsync(b.Scope,Fetch,Analyze,new ModelSettings(),30,b.Scope.End).GetAwaiter().GetResult());Assert(calls==0);});
+        yield return ("A-B-A 修订经过清理与重启仍不重试未知 A",()=>{var repo=new MemoryStore();var state=new InsightState();var a=Demo.CreateBatch();state.Ingest(a);state.MarkAttempted(a.Scope,a.Messages);var rows=a.Messages.ToArray();rows[0]=rows[0]with{Text="B revision"};var b=a with{Messages=rows};state.Ingest(b);state.MarkAttempted(b.Scope,b.Messages);state.Trim(a.Scope.End,30);repo.Save(state);var restored=repo.Load();restored.Ingest(a);Assert(restored.Unanalyzed(a.Scope,40).Count==0);});
+        yield return ("保留期清理后不能重新导入过期正文",()=>{var s=new InsightState();var b=Demo.CreateBatch();s.Trim(b.Scope.End.AddDays(31),30);Denied(()=>s.Ingest(b));Assert(s.Messages.Count==0);});
+        yield return ("未运行监控也不能搜索过期正文",()=>{var s=new InsightState();var b=OldBatch();s.Ingest(b);Assert(LocalSearch.Find(s,b.Scope,"登录").Messages.Count==0);});
+        yield return ("保存状态时即清理过期正文",()=>{WithStore((repo,path,cipher)=>{var s=new InsightState();s.Ingest(OldBatch());repo.Save(s);Assert(s.Messages.Count==0&&repo.Load().Messages.Count==0);});});
+        yield return ("启动读取旧状态时即清理过期正文",()=>{WithStore((repo,path,cipher)=>{var s=new InsightState();s.Ingest(OldBatch());File.WriteAllBytes(path,cipher.Protect(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(s)));Assert(repo.Load().Messages.Count==0);});});
+        yield return ("过期候选不能在整理时重新上传",()=>{var b=OldBatch();var calls=0;var engine=new MonitorEngine(new InsightState(),new MemoryStore());Denied(()=>engine.AnalyzeOnceAsync(b,"task",new ModelSettings(),(batch,task,_)=>{calls++;return Task.FromResult(new ModelResult(Demo.Analyze(batch,task),0,0));},DateTimeOffset.UtcNow).GetAwaiter().GetResult());Assert(calls==0);});
+        yield return ("超过三十一天的监控起点仍以一小时窗口追赶",()=>{var b=Demo.CreateBatch();var origin=b.Scope with{Start=b.Scope.Start.AddDays(-60)};var next=MonitorEngine.NextScope(new InsightState(),origin,b.Scope.End);Assert(next.Start==origin.Start&&next.End-next.Start==TimeSpan.FromHours(1));});
+        yield return ("未来参考时钟下模拟原文仍在保留期内可读",()=>{var reference=DateTimeOffset.Parse("2034-03-02T02:00:00Z");var batch=Demo.CreateBatch(reference);var state=new InsightState();state.Trim(reference,30);state.Ingest(batch);Assert(batch.Scope.Start==DateTimeOffset.Parse("2034-03-02T07:00:00+08:00")&&batch.Messages.All(m=>m.CreatedAt<reference));Assert(LocalSearch.Find(state,batch.Scope,"登录",reference).Messages.Count==2);});
+        yield return ("报告按最早来源时间而非仅生成时间到期",()=>{var b=Demo.CreateBatch();var now=b.Scope.End;var s=new InsightState();s.Reports.Add(new SavedReport(now,b.Scope.Key,"task","quoted old source",false,now.AddDays(-31)));s.Trim(now,30);Assert(s.Reports.Count==0);});
+        yield return ("来源年龄未知的旧报告不能绕过保留期",()=>{var s=new InsightState();s.Reports.Add(new SavedReport(DateTimeOffset.UtcNow,"scope","task","legacy quote"));s.Trim(DateTimeOffset.UtcNow,30);Assert(s.Reports.Count==0);});
+        yield return ("保存结果重启后可直接取回 Markdown",()=>{WithStore((repo,path,cipher)=>{var b=Demo.CreateBatch();var s=new InsightState();var engine=new MonitorEngine(s,repo);engine.AnalyzeOnceAsync(b,"saved task",new ModelSettings(),(batch,task,_)=>Task.FromResult(new ModelResult(Demo.Analyze(batch,task),0,0)),DateTimeOffset.UtcNow).GetAwaiter().GetResult();var restored=repo.Load();Assert(restored.Reports.Count==1&&restored.Reports[0].Markdown.Contains("demo-2")&&restored.Reports[0].OldestSourceAt==b.Messages.Min(m=>m.CreatedAt));});});
+        yield return ("监控身份会话和原始起点在加密恢复后保留",()=>{WithStore((repo,path,cipher)=>{var now=DateTimeOffset.UtcNow;var s=new InsightState{RetentionDays=90,Monitoring=new MonitoringOrigin("saved:identity","saved-conversation",now.AddDays(-60))};repo.Save(s);var restored=repo.Load();var scope=restored.Monitoring!.Scope(now);var next=MonitorEngine.NextScope(restored,scope,now);Assert(scope.Profile=="saved:identity"&&scope.ConversationId=="saved-conversation"&&next.Start==now.AddDays(-60)&&next.End==now.AddDays(-60).AddHours(1));});});
+        yield return ("同一来源全部尝试修订随来源年龄到期",()=>{var s=new InsightState();var b=Demo.CreateBatch();s.MarkAttempted(b.Scope,b.Messages);s.MarkAttempted(b.Scope,b.Messages.Select(m=>m with{Text="revision"}));s.Trim(b.Scope.End.AddDays(31),30);Assert(s.Attempted.Count==0&&s.AttemptSources.Count==0);});
+        yield return ("清空索引不能清空预算且丢弃正文与回执",()=>{var s=new InsightState();var b=Demo.CreateBatch();s.Ingest(b);s.MarkAttempted(b.Scope,b.Messages);s.Reserve(new ModelSettings(),0.001m,DateTimeOffset.UtcNow);s.InputTokens=123;s.OutputTokens=45;var day=s.BudgetDay;s.ClearIndex();Assert(s.Messages.Count==0&&s.Receipts.Count==0&&s.Attempted.Count==0&&s.ReservedUsd==0.001m&&s.Requests==1&&s.BudgetDay==day&&s.InputTokens==123&&s.OutputTokens==45);});
+        yield return ("不完整回执原始元数据加密恢复且不进入明文文件",()=>{WithStore((repo,path,cipher)=>{var b=Demo.CreateBatch()with{Complete=false,Ledger=new Dictionary<string,System.Text.Json.JsonElement>{{"failures",System.Text.Json.JsonSerializer.SerializeToElement(new[]{"SYNTHETIC_RAW_PROVIDER_DETAIL"})}}};var s=new InsightState();s.Ingest(b);repo.Save(s);var restored=repo.Load();Assert(restored.Receipts.Count==1&&!restored.Receipts[0].Complete&&restored.Receipts[0].Ledger["failures"][0].GetString()=="SYNTHETIC_RAW_PROVIDER_DETAIL");Assert(!System.Text.Encoding.UTF8.GetString(File.ReadAllBytes(path)).Contains("SYNTHETIC_RAW_PROVIDER_DETAIL"));});});
+        yield return ("采集回执条数和每份原始元数据均有界",()=>{var s=new InsightState();var b=Demo.CreateBatch();for(var i=0;i<105;i++)s.Ingest(b);Assert(s.Receipts.Count==100);s.Ingest(b with{Complete=false,Ledger=new Dictionary<string,System.Text.Json.JsonElement>{{"large",System.Text.Json.JsonSerializer.SerializeToElement(new string('x',40000))}}});Assert(s.Receipts.Count==100&&s.Receipts[^1].MetadataOmitted&&s.Receipts[^1].Ledger.Count==0&&!s.Receipts[^1].Complete);});
+        yield return ("旧版未知来源尝试在扩展保留期后仍保护原修订",()=>{var b=Demo.CreateBatch();var s=new InsightState();var attempt=InsightState.AttemptKey(b.Scope,b.Messages[0]);s.Attempted.Add(attempt);s.Trim(b.Scope.End,30);s.Trim(b.Scope.End.AddDays(31),365);Assert(s.Attempted.Contains(attempt));});
+        yield return ("未来十点一天保留允许模拟范围和原文入库",()=>{var reference=DateTimeOffset.Parse("2034-03-02T02:00:00Z");var batch=Demo.CreateBatch(reference);var s=new InsightState();s.Trim(reference,1);s.EnsureScopeRetained(batch.Scope);Assert(s.Ingest(batch)==4&&s.Messages.Count==4&&batch.Scope.End<=reference&&batch.Scope.Start>=DateTimeOffset.Parse("2034-03-01T02:00:00Z"));});
+        yield return ("未来十点一天保留可搜索模拟原文",()=>{var reference=DateTimeOffset.Parse("2034-03-02T02:00:00Z");var batch=Demo.CreateBatch(reference);var s=new InsightState();s.Trim(reference,1);s.Ingest(batch);Assert(LocalSearch.Find(s,batch.Scope,"登录",reference).Messages.Count==2);});
+        yield return ("按需分析等待引擎跨午夜后按实际派发日预留且不绕过上限",()=>
+        {
+            async Task Check()
+            {
+                var began=DateTimeOffset.Parse("2034-03-02T23:59:50Z");var current=began;
+                var batch=Demo.CreateBatch(began)with{IsDemo=false};var state=new InsightState();var store=new MemoryStore();var engine=new MonitorEngine(state,store);
+                var model=new ModelSettings{MaxRequestsPerDay=1};var release=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);var entered=false;var calls=0;
+                Task<ModelResult> Analyze(MessageBatch selected,string task,CancellationToken _)
+                {
+                    calls++;return Task.FromResult(new ModelResult(new AnalysisReport(selected,[],[],task),1,1));
+                }
+                var collecting=engine.TickAsync(batch.Scope,async(scope,_)=>
+                {
+                    entered=true;await release.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                    return batch with{Scope=scope,Messages=batch.Messages.Where(message=>message.CreatedAt>=scope.Start&&message.CreatedAt<scope.End).ToArray()};
+                },null,model,30,began);
+                Task<ModelResult>? analyzing=null;
+                try
+                {
+                    Assert(entered);
+                    analyzing=engine.AnalyzeOnceAsync(batch,"synthetic task",model,Analyze,began,utcNow:()=>current);
+                    Assert(!analyzing.IsCompleted);current=began.AddSeconds(20);release.TrySetResult();await collecting;await analyzing;
+                    Assert(calls==1&&state.BudgetDay=="2034-03-03"&&state.Requests==1);
+                    var attempted=state.Attempted.Count;var reserved=state.ReservedUsd;
+                    MonitoringFault? denied=null;
+                    try{await engine.AnalyzeOnceAsync(batch with{Messages=batch.Messages.Select(message=>message with{Text=message.Text+" revised"}).ToArray()},"synthetic task",model,Analyze,began,utcNow:()=>current);}
+                    catch(MonitoringFault error){denied=error;}
+                    Assert(denied?.Category==MonitorFailure.Budget&&denied.DeferredUntil==DateTimeOffset.Parse("2034-03-04T00:00:00Z")&&calls==1&&state.Attempted.Count==attempted&&state.ReservedUsd==reserved);
+                }
+                finally{release.TrySetResult();await collecting;if(analyzing is not null)await analyzing;}
+            }
+            Check().GetAwaiter().GetResult();
+        });
+        yield return ("全天参考时间的完整模拟范围均在一天保留内",()=>{foreach(var clock in new[]{"2034-03-02T00:00:00+08:00","2034-03-02T09:00:00+08:00","2034-03-02T10:00:00+08:00","2034-03-02T23:59:59+08:00"}){var reference=DateTimeOffset.Parse(clock);var batch=Demo.CreateBatch(reference);var s=new InsightState();s.Trim(reference,1);s.EnsureScopeRetained(batch.Scope);Assert(batch.Complete&&batch.Scope.End<=reference&&batch.Messages.All(m=>m.CreatedAt>=s.RetentionCutoff&&m.CreatedAt<reference));}});
+    }
+    static MessageBatch OldBatch(){var b=Demo.CreateBatch();return b with{Scope=b.Scope with{Start=b.Scope.Start.AddDays(-40),End=b.Scope.End.AddDays(-40)},Messages=b.Messages.Select(m=>m with{CreatedAt=m.CreatedAt.AddDays(-40)}).ToArray()};}
+    static void WithStore(Action<EncryptedStateStore,string,IDataCipher> action)
+    {
+        var path=Path.Combine(Path.GetTempPath(),"insights-retention-"+Guid.NewGuid());var cipher=new TestCipher();
+        try{using var repo=new EncryptedStateStore(path,cipher);action(repo,path,cipher);}finally{File.Delete(path);File.Delete(path+".lock");}
+    }
+    sealed class TestCipher:IDataCipher
+    {
+        readonly byte[] key=System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+        public byte[] Protect(byte[] data){var n=System.Security.Cryptography.RandomNumberGenerator.GetBytes(12);var output=new byte[28+data.Length];n.CopyTo(output,0);using var aes=new System.Security.Cryptography.AesGcm(key,16);aes.Encrypt(n,data,output.AsSpan(28),output.AsSpan(12,16));return output;}
+        public byte[] Unprotect(byte[] data){var result=new byte[data.Length-28];using var aes=new System.Security.Cryptography.AesGcm(key,16);aes.Decrypt(data.AsSpan(0,12),data.AsSpan(28),data.AsSpan(12,16),result);return result;}
+    }
+    sealed class MemoryStore:IStateStore
+    {
+        string json="{}";
+        public InsightState Load()=>System.Text.Json.JsonSerializer.Deserialize<InsightState>(json)!;
+        public void Save(InsightState state)=>json=System.Text.Json.JsonSerializer.Serialize(state);
+    }
+    sealed class FailingStore:IStateStore
+    {
+        public InsightState Load()=>new();
+        public void Save(InsightState state)=>throw new SafetyException("synthetic disk failure");
+    }
+}

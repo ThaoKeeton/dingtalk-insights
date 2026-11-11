@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../../src/DingTalkInsights.Core/DingTalkInsights.Core.csproj" /><ProjectReference Include="../../src/DingTalkInsights.Runtime/DingTalkInsights.Runtime.csproj" /></ItemGroup>
+  <ItemGroup><Compile Include="../../src/DingTalkInsights.Desktop/MainWindow.Monitoring.cs" Link="ProductionHost/MainWindow.Monitoring.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../../src/DingTalkInsights.Workbench/PluginSession.cs" Link="ProductionAdapter/PluginSession.cs" /><Compile Include="../../src/DingTalkInsights.Workbench/NativeActionGate.cs" Link="ProductionAdapter/NativeActionGate.cs" /></ItemGroup>
+</Project>

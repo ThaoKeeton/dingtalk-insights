@@ -1,0 +1,183 @@
+{
+  "repository": "ThaoKeeton/project-workbench",
+  "commit": "27154465c08d132798c8ea7b637f137f7340a90b",
+  "rootTree": "5d00a28c12e85c1bf0f77139c7c6524748c13223",
+  "files": {
+    "Directory.Build.props": {
+      "gitBlob": "36e5497e5cc12332136545036d8b6aa873869b4d",
+      "sha256": "e1f773524cbe06e47ce9373a35995982889f95f1f943cde9830a99ba4257e76b"
+    },
+    "global.json": {
+      "gitBlob": "ddcd6c772a44554bb20e1118efc84e42f824e694",
+      "sha256": "6a9d5e059d71e51ec61f582ea1cda96d2254bf83f7857846e40f0466e6dd9417"
+    },
+    "src/Workbench.App/App.xaml": {
+      "gitBlob": "e4ee81a9bd07b42cf2f415d7d5433be699ef9f43",
+      "sha256": "342ce4a138885091a7fadfaf7e9c134a9b217b4c6c56c5983cc2e858f2efa1e0"
+    },
+    "src/Workbench.App/BackgroundPage.cs": {
+      "gitBlob": "48a62fd915c0fbe3ef148acdef25cd3fbc590a30",
+      "sha256": "d5ddb4705d3b26278d1c115b9644e7e15a8a907a105d65cb47763dec2f0036df"
+    },
+    "src/Workbench.App/CredentialPage.cs": {
+      "gitBlob": "4fefe3a91b9a59b4788b18f2d8984c7f9486701d",
+      "sha256": "f105340efa000d3607062f095705c449bb8cab8a148490cc7c0fff618b452eb7"
+    },
+    "src/Workbench.App/HostRuntime.cs": {
+      "gitBlob": "fce82b3262a46cfedcca92d4beb228ca482b0b0e",
+      "sha256": "4c1d8ef5668ba98a60b02102e67efdae97991a1175b681b848a7771be2be1e27"
+    },
+    "src/Workbench.App/HostRuntimeOptions.cs": {
+      "gitBlob": "233a6e23feb517fb8f31df527ad5ad40a05be28f",
+      "sha256": "5ce765ea28376d02997e05a9704c0759a69f06327cda31a323537938d07a0e3d"
+    },
+    "src/Workbench.App/MainWindow.cs": {
+      "gitBlob": "14db0dbe0c221f49f575ffe8f139703e6ba7b15f",
+      "sha256": "377b2749b20d3bee6ebb594bade361e265c9b150893edfe7e3bd379f042d52bb"
+    },
+    "src/Workbench.App/NativeManagementProbe.cs": {
+      "gitBlob": "1a3818d4bbdd0900f115c632c0f7df13b2613a03",
+      "sha256": "a470fded3fd2747e62293bf9cbad06afa5aad8f7e70f21e6444657b060029c4d"
+    },
+    "src/Workbench.App/NativeRestartProbe.cs": {
+      "gitBlob": "b1e6f0aa50bfb8b3fe5fefb8e6acfb170dbe4d47",
+      "sha256": "0570c14767d94210ea2f7dbc2360753cdcd3e8d59a4370fb8975318d7243d4a6"
+    },
+    "src/Workbench.App/NativeRuntimeProbe.cs": {
+      "gitBlob": "64dce8de1e29a6c926b77e76b87f7612a36de1cd",
+      "sha256": "19ad8c49931e63034141f96e5e87bc0321149a7cf055a3a05ab548e43f7f0b96"
+    },
+    "src/Workbench.App/NativeSmoke.cs": {
+      "gitBlob": "29d4801c30eb10be0be6e4edaa1b69c21589429c",
+      "sha256": "32cb2737a01dc78b608d652ae9464b1f1118e8772215f2476c750b17214e6ffe"
+    },
+    "src/Workbench.App/PackageMaintenancePage.cs": {
+      "gitBlob": "ba8fb53f7d72d6981bf4ff589278b79318f72df0",
+      "sha256": "36f33d0952337d223d3737f7b9c3095d3b902f346a5886e83604d335a1709fec"
+    },
+    "src/Workbench.App/RunOptions.cs": {
+      "gitBlob": "6dc07f053cd83f61a957236e713f733a4f819318",
+      "sha256": "6628bfc618496d227760a64b65b241b9cbd28a9adb5149db2837736073787b82"
+    },
+    "src/Workbench.App/ShellPages.cs": {
+      "gitBlob": "82df714de257fac20cba769137dd4b00677079d5",
+      "sha256": "e9704493b418596615119270b1a2da7a8fde1613cce3802f78a8fca7c84b4c20"
+    },
+    "src/Workbench.App/Ui.cs": {
+      "gitBlob": "a99502ed52481244d274c86bcd32f71631c44d0f",
+      "sha256": "0dc16026faccfc1ceeeccaacc53c92090a1e376a2676c4825160d2d9bf211e52"
+    },
+    "src/Workbench.App/Workbench.App.csproj": {
+      "gitBlob": "223132ae1b5dc64aec5570c7d7f1ed7a452c1d46",
+      "sha256": "17b7f593f9aac63b9ce074e2db9e9319cce8f1517ee5200a25af1ed4072ad2c3"
+    },
+    "src/Workbench.App/WorkbenchApplication.cs": {
+      "gitBlob": "a1694b1cc01373633fe4568bab912448681f61fa",
+      "sha256": "631f82ec80d6dcc48425eeaad6cd18883ceb9b255964fc93aeeba8adcc62eeec"
+    },
+    "src/Workbench.App/app.manifest": {
+      "gitBlob": "b784f164d832d04a4ded93a79d9f617b9f692033",
+      "sha256": "c8d43ab87b6a026d59cbfcf987b7d9481e6c83813cad494a3b7b4aad3fb5a8e5"
+    },
+    "src/Workbench.Core/AtomicJsonFile.cs": {
+      "gitBlob": "e8603ffb8b27412926bd40264d130725da34198a",
+      "sha256": "ee0c341c811ebebc5bdea478edebbdac71f8dfac3a84425ace6f59d85685d94f"
+    },
+    "src/Workbench.Core/FileSystemGuard.cs": {
+      "gitBlob": "cc495968d8242eb651f4b7b99430353c20ed57ac",
+      "sha256": "bb40d0ebaf3355b63266b77ee2a130b2903daeda3e638cad420e736477869314"
+    },
+    "src/Workbench.Core/JsonPluginSettings.cs": {
+      "gitBlob": "1abb6d99bad2314eea69da9a912a83eb1b5a0a16",
+      "sha256": "6a7d1914fe7c8a880b13235634ec357b2430a4818dd8f0ef304bcf6f040806a3"
+    },
+    "src/Workbench.Core/LoadedPackageRegistry.cs": {
+      "gitBlob": "642ae827c04321a5cbb749947ea5084083f7b10a",
+      "sha256": "69a67e7a7e3cd70db69dfe15c44ec09c5b9ba2ce91cf6be8fde040de4fd683f8"
+    },
+    "src/Workbench.Core/PackageArchive.cs": {
+      "gitBlob": "47d4f082b1cc7ebb7a3159a80e21b9323eac34c8",
+      "sha256": "96e14bcace75a7796bbbf861aed01ed9ab558216dd20040860a8d307a8b2a135"
+    },
+    "src/Workbench.Core/PackageDataBackup.cs": {
+      "gitBlob": "30c83d627eeb3f4ade6bc5e70b9e70ee8c139587",
+      "sha256": "e815f1701e24ae7adb343044ce923331b7fe1b273133e138008b837b66462e0c"
+    },
+    "src/Workbench.Core/PackageJournal.cs": {
+      "gitBlob": "714635cbaffb1dde2dd722fce446446bec8e3cfb",
+      "sha256": "3dff5b13cf9ea2a81c6b58ec492e56a6a8c113b63d76e0c56cc2cb5c859bfa95"
+    },
+    "src/Workbench.Core/PackageModels.cs": {
+      "gitBlob": "c5bfa15888d962ec76e1804d6ed017f9471386c6",
+      "sha256": "211f3b30f7daffc285d44c75a68b9a74a7355efd9c57c8f3d2092b29b3e41baf"
+    },
+    "src/Workbench.Core/PackageValidator.cs": {
+      "gitBlob": "d6f0e42e9485daa8b5945ba4fee0717152fcdb8b",
+      "sha256": "95f57295e8a68e192e00851c930c22a98e76334309890a682bc2eefe467c9b2f"
+    },
+    "src/Workbench.Core/PluginBackgroundTasks.cs": {
+      "gitBlob": "e21c94a0a313907f3cb54182ff9a2fe8d96a4a0e",
+      "sha256": "6671682110623c6f8df2640a2ddf8735cf0bd11b3c78dc878e4535c58c3526a4"
+    },
+    "src/Workbench.Core/PluginLoadContext.cs": {
+      "gitBlob": "773bc5d15fce507640824b03f00cb881bac76f90",
+      "sha256": "d78eb52cc2cb86dcfdd2dd6f43cfb747de4e6b8cf974849e055a3b72a4a19f93"
+    },
+    "src/Workbench.Core/PluginManager.cs": {
+      "gitBlob": "1ed4986e55fbee7611d81d6eb709c5f0b68e85a2",
+      "sha256": "de88b1e6d921af9cb961b69f9e249514b6a57860b90ba0afed0d23bd61371d99"
+    },
+    "src/Workbench.Core/PluginModels.cs": {
+      "gitBlob": "aca653385c55f9a4745b428648b4568a226769ad",
+      "sha256": "63526a73d06c493c5ec1cbcacf42df10e9d15d3137803366aa705e75914c25d4"
+    },
+    "src/Workbench.Core/PluginPackageStore.cs": {
+      "gitBlob": "d65631b22d596fcff38e89562295d0ef1b242bc7",
+      "sha256": "95f0e523f5e3e6ccd1e9b82919707ae37077b7a3d4e6dc0247ac38bd57f7ba7b"
+    },
+    "src/Workbench.Core/PluginRegistrationContext.cs": {
+      "gitBlob": "025bef765a0ad5b0a8a0a620049cfce70d0f1e4f",
+      "sha256": "f028dedca05831d9b45159ad462a9c6208e43ffaafed22403388e8f57266b7ea"
+    },
+    "src/Workbench.Core/PluginRuntimeState.cs": {
+      "gitBlob": "acd3b7255275b404d1704a6dab6f8267589dcf48",
+      "sha256": "d4cde588d11c6a03241f3157ae8d69d3b84a766c398a1c9f011aacdff34f547c"
+    },
+    "src/Workbench.Core/PluginSecretStore.cs": {
+      "gitBlob": "e1acb3337d309952dfec655711ba21ee53982ea0",
+      "sha256": "65d86b20239e6abc1f01a1024f58a93b681f2d7cb9b91e5ffb714f80a8c048a1"
+    },
+    "src/Workbench.Core/PluginStateStore.cs": {
+      "gitBlob": "5bac93daa2c7b0f1f3ecaae3c45dd59013c5410c",
+      "sha256": "ac1a8b97091c0d4de9cbb7e75b76a8505cc8860a933a8a6f54cace95c4eb023b"
+    },
+    "src/Workbench.Core/WindowsSecretProtector.cs": {
+      "gitBlob": "a3fec56716d4d746b7a691793446ed72e0e9eb4d",
+      "sha256": "9b870964dbb3be06d1c616a6785c615f46d5f939cc7843c42f9a4b506ca0594b"
+    },
+    "src/Workbench.Core/Workbench.Core.csproj": {
+      "gitBlob": "161fa99217db7f6f2d56d3c9780e49821256ad32",
+      "sha256": "471bfa78c3c7e3a272ec575f722b495bfd126f4eae4d047526345a0e9028aa79"
+    },
+    "src/Workbench.Sdk/PluginContracts.cs": {
+      "gitBlob": "acf86a1f39ae3bd0c95b4bc2cb82e236a6adea91",
+      "sha256": "cd71d562f3b1c7edb196f281482bc2119b4a013cfe7ff06896e9c65020192daf"
+    },
+    "src/Workbench.Sdk/RuntimeContracts.cs": {
+      "gitBlob": "ee61641895fbe2d7a9a9167ebdda447bee337160",
+      "sha256": "89fc39ed19a0135885f5e7eafb5488e8bee188c902cad742302db6925929bb33"
+    },
+    "src/Workbench.Sdk/Workbench.Sdk.csproj": {
+      "gitBlob": "2ce50e9e2102b696a5fe07a7b038e86764a9f93e",
+      "sha256": "998ef86160d4e65613417d70bae499a49416cd573e06515788b94503cc9a36b9"
+    },
+    "src/Workbench.WinUI.Sdk/WinUiView.cs": {
+      "gitBlob": "a3772dbe6a873953bb5bd9457393f4685153b4ce",
+      "sha256": "f3d13fe7920bad36e037f3badb34d932a93fab6de99321538fd0fc0223d1dd3a"
+    },
+    "src/Workbench.WinUI.Sdk/Workbench.WinUI.Sdk.csproj": {
+      "gitBlob": "6d815f42244a305d81d39c8b39b27ac130e387e5",
+      "sha256": "d4143a099c4ad779a4de1f3e9281d19cd9adc40e574449fd9c3eb34762c0aac3"
+    }
+  }
+}

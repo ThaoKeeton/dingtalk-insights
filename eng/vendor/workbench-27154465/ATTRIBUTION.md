@@ -1,0 +1,3 @@
+# Exact Workbench input attribution
+
+Repository: ThaoKeeton/project-workbench. Commit 27154465c08d132798c8ea7b637f137f7340a90b, root tree 5d00a28c12e85c1bf0f77139c7c6524748c13223. These 44 SDK/Core and original App inputs were retrieved from connected GitHub source and every byte verified against its Git blob identity. Source files, props, projects and global.json are immutable. API 1/runtime-services 1, package/file 0.2, shared SDK AssemblyVersion 1.0.0.0. Upstream supplied no license file; original author rights remain. Platform CI 42285023349 passed separately. Prior snapshots 82bd958e and 6565180b remain for rollback.
